@@ -183,6 +183,23 @@
         "ref": "main"
       },
       "category": "security"
+    },
+    {
+      "name": "claude-mem",
+      "description": "Persistent memory system for Claude Code - context compression across sessions",
+      "version": "15.7.0",
+      "author": {
+        "name": "Alex Newman"
+      },
+      "homepage": "https://github.com/thedotmack/claude-mem#readme",
+      "license": "Apache-2.0",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/thedotmack/claude-mem.git",
+        "path": "plugin",
+        "ref": "v15.7.0"
+      },
+      "category": "productivity"
     }
   ],
   "renames": {

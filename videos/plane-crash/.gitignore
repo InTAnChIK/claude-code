@@ -1,0 +1,6 @@
+tts/venv/
+tts/voices/
+tts/lines_*/
+tts/voice_*.wav
+plane/audio.wav
+plane/preview/

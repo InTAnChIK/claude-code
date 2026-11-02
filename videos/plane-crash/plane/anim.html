@@ -1,0 +1,651 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head><body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 1080, H = 1920, FPS = 30, DURATION = 80;
+const C = {
+  bg0: '#02060F', bg1: '#081428', cyan: '#46CBFF', blue: '#2A7BFF', amber: '#FFB627',
+  red: '#FF3448', green: '#2EE59D', white: '#EEF4FF', dim: '#6A7F9F', yellow: '#FFD84A',
+  jacket: '#2D5288', pants: '#18263F', skin: '#C9D3E2', panel: 'rgba(4,12,26,0.88)'
+};
+const MONO = '"JetBrains Mono"', SANS = 'Inter';
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eo = x => 1 - Math.pow(1 - x, 3);
+const eio = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const lerp = (a, b, k) => a + (b - a) * k;
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+function rrect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+// ---------- common UI ----------
+function background(top = C.bg0, bottom = C.bg1) {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, top); g.addColorStop(1, bottom);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(90,150,230,0.05)'; ctx.lineWidth = 1;
+  for (let x = 0; x <= W; x += 60) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y <= H; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+}
+
+// tag: panel with title (+ optional subtitle); k = appear progress 0..1
+function tag(x, y, title, sub, color, k = 1, align = 'center', size = 30) {
+  if (k <= 0) return;
+  ctx.save();
+  ctx.font = `800 ${size}px ${MONO}`;
+  const tw = ctx.measureText(title).width;
+  ctx.font = `500 ${Math.round(size * 0.62)}px ${MONO}`;
+  const sw = sub ? ctx.measureText(sub).width : 0;
+  const w = Math.max(tw, sw) + 44, h = sub ? size * 2.25 : size * 1.65;
+  let x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+  const s = 0.82 + 0.18 * eo(k);
+  ctx.globalAlpha = clamp(k * 1.6);
+  ctx.translate(x0 + w / 2, y + h / 2); ctx.scale(s, s); ctx.translate(-(x0 + w / 2), -(y + h / 2));
+  ctx.shadowColor = color; ctx.shadowBlur = 24;
+  rrect(x0, y, w, h, 10); ctx.fillStyle = C.panel; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = color; ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = color; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  ctx.font = `800 ${size}px ${MONO}`; ctx.fillText(title, x0 + 22, y + size * 0.3);
+  if (sub) { ctx.fillStyle = C.dim; ctx.font = `500 ${Math.round(size * 0.62)}px ${MONO}`; ctx.fillText(sub, x0 + 22, y + size * 1.4); }
+  ctx.restore();
+}
+
+function hud(text, color = C.cyan, k = 1) { tag(W / 2, 110, text, null, color, k, 'center', 30); }
+
+function glowText(text, x, y, font, color, blur = 30, align = 'center') {
+  ctx.save(); ctx.font = font; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.shadowColor = color; ctx.shadowBlur = blur; ctx.fillStyle = color; ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0; ctx.fillText(text, x, y); ctx.restore();
+}
+
+// ---------- subtitles ----------
+function parseChunk(s) {
+  const words = [];
+  const re = /\*([^*]+)\*|!([^!]+)!|([^*!]+)/g; let m;
+  while ((m = re.exec(s))) {
+    const color = m[1] ? C.yellow : m[2] ? C.red : C.white;
+    const txt = m[1] || m[2] || m[3];
+    txt.split(/\s+/).filter(Boolean).forEach(w => words.push({ w, color }));
+  }
+  return words;
+}
+function drawSub(chunk, age, big = false) {
+  const words = parseChunk(chunk);
+  const fs = big ? 150 : 92, lh = fs * 1.12, maxW = 960;
+  ctx.save(); ctx.font = `900 ${fs}px ${SANS}`;
+  const space = ctx.measureText(' ').width;
+  const lines = []; let cur = [], cw = 0;
+  for (const wd of words) {
+    const ww = ctx.measureText(wd.w).width;
+    if (cur.length && cw + space + ww > maxW) { lines.push({ ws: cur, w: cw }); cur = []; cw = 0; }
+    cw += (cur.length ? space : 0) + ww; cur.push({ ...wd, ww });
+  }
+  if (cur.length) lines.push({ ws: cur, w: cw });
+  const pop = 1 + 0.14 * (1 - eo(clamp(age / 0.16)));
+  const cy = big ? 960 : 1470;
+  ctx.translate(W / 2, cy); ctx.scale(pop, pop); ctx.translate(-W / 2, -cy);
+  ctx.globalAlpha = clamp(age / 0.08);
+  ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  const y0 = cy - (lines.length - 1) * lh / 2;
+  lines.forEach((ln, i) => {
+    let x = W / 2 - ln.w / 2; const y = y0 + i * lh;
+    for (const wd of ln.ws) {
+      ctx.lineWidth = 16; ctx.strokeStyle = 'rgba(0,0,0,0.9)'; ctx.strokeText(wd.w, x, y);
+      if (wd.color !== C.white) { ctx.shadowColor = wd.color; ctx.shadowBlur = 26; }
+      ctx.fillStyle = wd.color; ctx.fillText(wd.w, x, y); ctx.shadowBlur = 0;
+      x += wd.ww + space;
+    }
+  });
+  ctx.restore();
+}
+
+// ---------- fog ----------
+const FOG = (() => { const r = rng(7); return Array.from({ length: 46 }, () => ({ x: r() * 1300 - 110, y: r(), rad: 140 + r() * 220, sp: 8 + r() * 22, ph: r() * 6.28 })); })();
+function fog(alpha, t, yTop, yBottom, wavy = true) {
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(0, yTop); ctx.lineTo(W, yTop);
+  for (let x = W; x >= 0; x -= 20) ctx.lineTo(x, yBottom + (wavy ? Math.sin(x / 90 + t * 1.6) * 18 + Math.sin(x / 37 - t) * 8 : 0));
+  ctx.closePath(); ctx.clip();
+  const g = ctx.createLinearGradient(0, yTop, 0, yBottom);
+  g.addColorStop(0, `rgba(70,76,88,${0.92 * alpha})`); g.addColorStop(1, `rgba(110,116,128,${0.55 * alpha})`);
+  ctx.fillStyle = g; ctx.fillRect(0, yTop, W, yBottom - yTop + 40);
+  for (const b of FOG) {
+    const x = (b.x + t * b.sp) % 1300 - 110, y = lerp(yTop, yBottom, b.y) + Math.sin(t + b.ph) * 20;
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, b.rad);
+    rg.addColorStop(0, `rgba(160,166,178,${0.28 * alpha})`); rg.addColorStop(1, 'rgba(160,166,178,0)');
+    ctx.fillStyle = rg; ctx.fillRect(x - b.rad, y - b.rad, b.rad * 2, b.rad * 2);
+  }
+  ctx.restore();
+}
+
+// ---------- cabin (top-down) ----------
+const ROW0 = 300, RS = 28;
+const rowY = i => ROW0 + i * RS;
+const SEATX = [392, 432, 472, 574, 614, 654];
+function drawCabin(o = {}) {
+  const appear = o.appear ?? 1;
+  ctx.save();
+  // wings
+  ctx.fillStyle = 'rgba(40,110,200,0.10)'; ctx.strokeStyle = 'rgba(70,203,255,0.35)'; ctx.lineWidth = 2;
+  [[370, -1], [710, 1]].forEach(([x, d]) => {
+    ctx.beginPath(); ctx.moveTo(x, 600); ctx.lineTo(x + d * 330, 840); ctx.lineTo(x + d * 330, 880); ctx.lineTo(x, 770); ctx.closePath(); ctx.fill(); ctx.stroke();
+  });
+  // tail
+  ctx.beginPath(); ctx.moveTo(540, 1250); ctx.lineTo(380, 1360); ctx.lineTo(380, 1385); ctx.lineTo(540, 1340); ctx.lineTo(700, 1385); ctx.lineTo(700, 1360); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // fuselage
+  ctx.beginPath();
+  ctx.moveTo(370, 300); ctx.bezierCurveTo(370, 180, 470, 130, 540, 130); ctx.bezierCurveTo(610, 130, 710, 180, 710, 300);
+  ctx.lineTo(710, 1200); ctx.bezierCurveTo(710, 1290, 600, 1350, 540, 1360); ctx.bezierCurveTo(480, 1350, 370, 1290, 370, 1200); ctx.closePath();
+  ctx.fillStyle = 'rgba(14,40,84,0.55)'; ctx.fill();
+  ctx.shadowColor = C.cyan; ctx.shadowBlur = 18; ctx.strokeStyle = C.cyan; ctx.lineWidth = 3; ctx.stroke(); ctx.shadowBlur = 0;
+  // seats
+  for (let i = 1; i <= 32; i++) {
+    const k = seg(appear * 34 - i, 0, 1);
+    if (k <= 0) continue;
+    const y = rowY(i);
+    const hl = o.rows && o.rows[i] ? o.rows[i] : 0;
+    for (let j = 0; j < 6; j++) {
+      const you = o.you && i === 27 && j === 2;
+      ctx.globalAlpha = k;
+      rrect(SEATX[j], y - 10, 34, 21, 5);
+      if (you) {
+        const p = 0.6 + 0.4 * Math.sin((o.t || 0) * 8);
+        ctx.fillStyle = C.amber; ctx.shadowColor = C.amber; ctx.shadowBlur = 20 * p; ctx.fill(); ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = hl ? `rgba(255,182,39,${0.25 + 0.55 * hl})` : 'rgba(70,130,210,0.35)'; ctx.fill();
+        ctx.strokeStyle = hl ? C.amber : 'rgba(70,203,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = k * 0.7; ctx.fillStyle = C.dim; ctx.font = `500 13px ${MONO}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i), 540, y);
+  }
+  ctx.globalAlpha = 1;
+  // exits
+  const ex = [270, 650, 1228];
+  ex.forEach(y => {
+    [[352, 'right'], [728, 'left']].forEach(([x]) => {
+      ctx.shadowColor = C.green; ctx.shadowBlur = 16; ctx.fillStyle = C.green;
+      rrect(x - 8, y - 18, 16, 36, 4); ctx.fill(); ctx.shadowBlur = 0;
+    });
+  });
+  ctx.restore();
+}
+
+// ---------- figures ----------
+function limb(x1, y1, x2, y2, w, color) { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+function ik(hx, hy, fx, fy, L1, L2, dir = 1) {
+  const dx = fx - hx, dy = fy - hy; const d = Math.min(Math.hypot(dx, dy), L1 + L2 - 0.01);
+  const a = Math.atan2(dy, dx); const cosA = (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d);
+  const ang = a - dir * Math.acos(clamp(cosA, -1, 1));
+  return [hx + Math.cos(ang) * L1, hy + Math.sin(ang) * L1];
+}
+// side-view walking/crouching figure facing right
+function sideFigure(x, footY, crouch, walk, sc = 1, opt = {}) {
+  ctx.save(); ctx.translate(x, footY); ctx.scale(sc, sc);
+  const hipY = -lerp(158, 96, crouch), ta = lerp(0.06, 1.05, crouch);
+  const sx = Math.sin(ta) * 120, sy = hipY - Math.cos(ta) * 120;
+  const legs = [walk, walk + Math.PI];
+  legs.forEach((ph, i) => {
+    const fx = Math.sin(ph) * 38 + (crouch * 20), fy = -Math.max(0, Math.cos(ph)) * 10 * (opt.walking ? 1 : 0);
+    const [kx, ky] = ik(0, hipY, fx, fy, 82, 82, -1);
+    const col = i ? '#121D31' : C.pants;
+    limb(0, hipY, kx, ky, 30, col); limb(kx, ky, fx, fy, 28, col);
+    limb(fx, fy - 4, fx + 22, fy - 4, 16, '#0B1220');
+  });
+  // back arm
+  limb(sx * 0.9, sy + 10, sx + 40 + crouch * 30, sy + 80 + crouch * 10, 24, '#22406C');
+  // torso
+  limb(0, hipY, sx, sy, 56, C.jacket);
+  // head
+  const hx = sx + Math.sin(ta) * 46, hy = sy - Math.cos(ta) * 46;
+  ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(hx, hy, 36, 0, 7); ctx.fill();
+  ctx.fillStyle = '#2A3446'; ctx.beginPath(); ctx.arc(hx - 6, hy - 6, 34, Math.PI * 0.9 + ta, Math.PI * 1.75 + ta); ctx.fill();
+  // front arm
+  limb(sx, sy + 10, sx + 50 + crouch * 40, sy + 70 + crouch * 30, 24, '#3A64A2');
+  ctx.restore();
+  return { hx: x + hx * sc, hy: footY + hy * sc };
+}
+
+// seated side view, a = forward lean (0..0.92)
+function seatedFigure(hx, hy, a, armsUp) {
+  // legs
+  limb(hx, hy, hx + 150, hy + 4, 34, C.pants); limb(hx + 150, hy + 4, hx + 162, hy + 150, 30, C.pants);
+  limb(hx + 162, hy + 150, hx + 192, hy + 150, 18, '#0B1220');
+  const L = 170, sx = hx + Math.sin(a) * L, sy = hy - Math.cos(a) * L;
+  const hdx = sx + Math.sin(a) * 52, hdy = sy - Math.cos(a) * 52;
+  limb(hx, hy, sx, sy, 60, C.jacket);
+  ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(hdx, hdy, 42, 0, 7); ctx.fill();
+  ctx.fillStyle = '#2A3446'; ctx.beginPath(); ctx.arc(hdx - 4, hdy - 6, 40, Math.PI * 0.95 + a, Math.PI * 1.8 + a); ctx.fill();
+  if (armsUp > 0) {
+    const tx = lerp(hx + 140, hdx + 30, armsUp), ty = lerp(hy - 10, hdy - 40, armsUp);
+    const [ex, ey] = ik(sx, sy + 10, tx, ty, 80, 80, 1);
+    limb(sx, sy + 10, ex, ey, 26, '#3A64A2'); limb(ex, ey, tx, ty, 24, '#3A64A2');
+  } else {
+    limb(sx, sy + 12, hx + 70, hy - 20, 26, '#3A64A2'); limb(hx + 70, hy - 20, hx + 140, hy - 8, 24, '#3A64A2');
+  }
+  return { hdx, hdy };
+}
+function seatSide(x, floorY) {
+  ctx.fillStyle = '#16294A'; ctx.strokeStyle = 'rgba(70,203,255,0.45)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x - 90, floorY - 150); ctx.lineTo(x - 120, floorY - 470); ctx.lineTo(x - 80, floorY - 475); ctx.lineTo(x - 52, floorY - 150); ctx.closePath(); ctx.fill(); ctx.stroke();
+  rrect(x - 95, floorY - 175, 190, 34, 10); ctx.fill(); ctx.stroke();
+  limb(x - 60, floorY - 140, x - 70, floorY, 8, '#0F1D36'); limb(x + 70, floorY - 140, x + 80, floorY, 8, '#0F1D36');
+}
+
+// front-view seated person
+function frontFigure(x, y, s, col = C.jacket) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = '#132542'; rrect(-110, -150, 220, 360, 30); ctx.fill();
+  ctx.strokeStyle = 'rgba(70,203,255,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = col; rrect(-80, 0, 160, 210, 50); ctx.fill();
+  ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(0, -50, 52, 0, 7); ctx.fill();
+  ctx.fillStyle = '#2A3446'; ctx.beginPath(); ctx.arc(0, -62, 52, Math.PI, 0); ctx.fill();
+  ctx.restore();
+}
+function mask(x, y, s = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.shadowColor = C.yellow; ctx.shadowBlur = 18; ctx.fillStyle = C.yellow;
+  ctx.beginPath(); ctx.moveTo(-30, -24); ctx.lineTo(30, -24); ctx.lineTo(22, 22); ctx.quadraticCurveTo(0, 34, -22, 22); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0; ctx.fillStyle = '#C49A10'; rrect(-30, -28, 60, 10, 4); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- scenes ----------
+const scenes = [];
+function S(t0, t1, draw, subs) { scenes.push({ t0, t1, draw, subs }); }
+
+// 1. Porthole — plane is falling
+S(0, 4, (lt) => {
+  const sh = 6 + lt * 3;
+  ctx.translate(Math.sin(lt * 37) * sh, Math.cos(lt * 29) * sh);
+  background('#070D19', '#0B1426');
+  const cx = 540, cy = 760, rx = 300, ry = 400;
+  ctx.save(); rrect(cx - rx, cy - ry, rx * 2, ry * 2, 260); ctx.clip();
+  const ang = -0.12 - 0.45 * eio(seg(lt, 0, 4)) + 0.03 * Math.sin(lt * 11);
+  ctx.translate(cx, cy); ctx.rotate(ang);
+  const hy = -200 + lt * 60;
+  const sky = ctx.createLinearGradient(0, -700, 0, hy); sky.addColorStop(0, '#071430'); sky.addColorStop(1, '#2A4F86');
+  ctx.fillStyle = sky; ctx.fillRect(-800, -900, 1600, hy + 900);
+  ctx.fillStyle = '#050B16'; ctx.fillRect(-800, hy, 1600, 1200);
+  const r = rng(3);
+  for (let i = 0; i < 160; i++) { const x = r() * 1400 - 700, y = hy + 20 + r() * 600; ctx.fillStyle = r() > .5 ? '#FFC870' : '#9FD8FF'; ctx.globalAlpha = .4 + r() * .6; ctx.fillRect(x, y, 3, 3); }
+  ctx.globalAlpha = 1;
+  const rc = rng(11);
+  for (let i = 0; i < 14; i++) {
+    const x = rc() * 1200 - 600, base = rc() * 1600, sp = 500 + rc() * 400;
+    const y = 900 - ((base + lt * sp) % 1800);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, 180); g.addColorStop(0, 'rgba(190,210,240,0.55)'); g.addColorStop(1, 'rgba(190,210,240,0)');
+    ctx.fillStyle = g; ctx.fillRect(x - 180, y - 180, 360, 360);
+  }
+  ctx.restore();
+  ctx.lineWidth = 34; ctx.strokeStyle = '#1A2840'; rrect(cx - rx, cy - ry, rx * 2, ry * 2, 260); ctx.stroke();
+  ctx.lineWidth = 4; ctx.strokeStyle = C.cyan; ctx.shadowColor = C.cyan; ctx.shadowBlur = 16; rrect(cx - rx - 20, cy - ry - 20, rx * 2 + 40, ry * 2 + 40, 280); ctx.stroke(); ctx.shadowBlur = 0;
+  const blink = Math.floor(lt * 3) % 2 === 0;
+  tag(540, 220, '⚠ ПРИСТЕГНИТЕ РЕМНИ', null, blink ? C.red : '#5A1B24', 1, 'center', 40);
+  const alt = Math.round(11000 - eio(seg(lt, 0, 4)) * 2600);
+  tag(80, 1215, `▼ ${alt.toLocaleString('ru-RU')} м`, 'ВЫСОТА', C.red, seg(lt, 0.3, 0.8), 'left', 30);
+  tag(1000, 1215, '−38 м/с', 'СНИЖЕНИЕ', C.amber, seg(lt, 0.6, 1.1), 'right', 30);
+}, ['!САМОЛЁТ! ПАДАЕТ.', 'А ВЫ СИДИТЕ', 'В *РЯДУ 27*']);
+
+// 2. Cabin schematic
+S(4, 10, (lt) => {
+  background();
+  hud('СХЕМА САЛОНА · 192 МЕСТА', C.cyan);
+  drawCabin({ appear: seg(lt, 0, 1.2), you: true, t: lt });
+  const y27 = rowY(27);
+  const k1 = seg(lt, 1.4, 1.8), k2 = seg(lt, 2.2, 2.6), k3 = seg(lt, 3.0, 3.4), k4 = seg(lt, 4.0, 4.4);
+  ctx.strokeStyle = C.amber; ctx.lineWidth = 2; ctx.globalAlpha = k1;
+  ctx.beginPath(); ctx.moveTo(489, y27); ctx.lineTo(260, y27 - 60); ctx.stroke(); ctx.globalAlpha = 1;
+  tag(60, y27 - 120, 'ВЫ · 27C', 'У ПРОХОДА', C.amber, k1, 'left');
+  ctx.strokeStyle = C.green; ctx.globalAlpha = k2; ctx.beginPath(); ctx.moveTo(736, 1228); ctx.lineTo(820, 1180); ctx.stroke(); ctx.globalAlpha = 1;
+  tag(1030, 1110, 'ВЫХОД', '5 РЯДОВ НАЗАД', C.green, k2, 'right');
+  ctx.strokeStyle = C.green; ctx.globalAlpha = k3; ctx.beginPath(); ctx.moveTo(736, 650); ctx.lineTo(850, 560); ctx.stroke(); ctx.globalAlpha = 1;
+  tag(1030, 480, 'ВЫХОД', '14 РЯДОВ ВПЕРЁД', C.green, k3, 'right');
+  tag(540, 1250, '⚠ 1 ОШИБКА = КОНЕЦ', null, C.red, k4, 'center', 34);
+}, ['ВЫЖИВЕТЕ ВЫ', 'ИЛИ НЕТ —', '*РЕШИЛОСЬ*', 'ЕЩЁ *ДО ВЗЛЁТА*']);
+
+// 3. Flight profile
+S(10, 18, (lt) => {
+  background();
+  hud('ПРОФИЛЬ ПОЛЁТА', C.cyan);
+  const x0 = 100, x1 = 980, yb = 1080, yt = 560;
+  ctx.strokeStyle = 'rgba(70,203,255,0.25)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x0, yb); ctx.lineTo(x1, yb); ctx.stroke();
+  const pts = [];
+  for (let i = 0; i <= 200; i++) {
+    const u = i / 200, x = lerp(x0, x1, u);
+    let y;
+    if (u < 0.22) y = lerp(yb, yt, eo(u / 0.22)); else if (u < 0.74) y = yt; else y = lerp(yt, yb, eio((u - 0.74) / 0.26));
+    pts.push([x, y]);
+  }
+  const zk1 = seg(lt, 2.6, 3.0), zk2 = seg(lt, 4.6, 5.0);
+  const z1 = [x0, x0 + 100], z2 = [x1 - 150, x1];
+  [[z1, zk1, '+3 МИН', 'ПОСЛЕ ВЗЛЁТА'], [z2, zk2, '−8 МИН', 'ДО ПОСАДКИ']].forEach(([z, k, a, b]) => {
+    if (k <= 0) return;
+    ctx.globalAlpha = k;
+    const g = ctx.createLinearGradient(0, yt - 80, 0, yb); g.addColorStop(0, 'rgba(255,52,72,0)'); g.addColorStop(1, 'rgba(255,52,72,0.45)');
+    ctx.fillStyle = g; ctx.fillRect(z[0], yt - 80, z[1] - z[0], yb - yt + 80);
+    ctx.strokeStyle = C.red; ctx.setLineDash([10, 8]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(z[0], yt - 80); ctx.lineTo(z[0], yb); ctx.moveTo(z[1], yt - 80); ctx.lineTo(z[1], yb); ctx.stroke(); ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    const cx = (z[0] + z[1]) / 2;
+    tag(clamp(cx, 180, 900), yb + 40, a, b, C.red, k, 'center', 32);
+  });
+  const prog = seg(lt, 0.2, 6.5), n = Math.floor(prog * 200);
+  ctx.shadowColor = C.cyan; ctx.shadowBlur = 16; ctx.strokeStyle = C.cyan; ctx.lineWidth = 5;
+  ctx.beginPath(); pts.slice(0, n + 1).forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); ctx.shadowBlur = 0;
+  if (n > 1) {
+    const [px, py] = pts[n], [qx, qy] = pts[Math.max(0, n - 2)];
+    ctx.save(); ctx.translate(px, py); ctx.rotate(Math.atan2(py - qy, px - qx));
+    ctx.fillStyle = C.white; ctx.beginPath(); ctx.moveTo(26, 0); ctx.lineTo(-18, -14); ctx.lineTo(-10, 0); ctx.lineTo(-18, 14); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  ctx.fillStyle = C.dim; ctx.font = `500 22px ${MONO}`; ctx.textAlign = 'left'; ctx.fillText('ВЗЛЁТ', x0, yb + 150 + 20);
+  ctx.textAlign = 'right'; ctx.fillText('ПОСАДКА', x1, yb + 170);
+  ctx.textAlign = 'center'; ctx.fillText('КРЕЙСЕРСКИЙ ПОЛЁТ', 540, yt - 30);
+  tag(540, 300, 'ОПАСНЫЕ 11 МИНУТ', 'ПРАВИЛО «ПЛЮС 3 — МИНУС 8»', C.amber, seg(lt, 6.2, 6.6), 'center', 36);
+}, ['БОЛЬШИНСТВО', '!КАТАСТРОФ! —', '*ПЕРВЫЕ 3 МИНУТЫ*', 'ПОСЛЕ ВЗЛЁТА', 'И *ПОСЛЕДНИЕ 8*', 'ПЕРЕД ПОСАДКОЙ']);
+
+// 4. Count rows
+S(18, 26, (lt) => {
+  background();
+  hud('ВЫ · 27C → ЗАДНИЙ ВЫХОД', C.amber);
+  const s = lerp(1, 2.3, eio(seg(lt, 0, 1.2))), ty = lerp(rowY(16), rowY(29.8), eio(seg(lt, 0, 1.2)));
+  const rows = {};
+  const times = [1.4, 2.1, 2.8, 3.5, 4.2];
+  times.forEach((tt, i) => { rows[28 + i] = seg(lt, tt, tt + 0.25); });
+  ctx.save(); ctx.translate(540, 820); ctx.scale(s, s); ctx.translate(-540, -ty);
+  drawCabin({ you: true, t: lt, rows });
+  // path along aisle
+  const pk = seg(lt, 1.3, 4.6);
+  if (pk > 0) {
+    ctx.strokeStyle = C.amber; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
+    ctx.beginPath(); ctx.moveTo(489, rowY(27)); ctx.lineTo(540, rowY(27) + 10); ctx.lineTo(540, lerp(rowY(27) + 10, 1228, pk)); if (pk >= 1) ctx.lineTo(700, 1228); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.restore();
+  fog(seg(lt, 4.6, 6.2) * 0.95, lt, 0, H, false);
+  times.forEach((tt, i) => {
+    const k = seg(lt, tt, tt + 0.2); if (k <= 0) return;
+    const y = (rowY(28 + i) - ty) * s + 820;
+    ctx.save(); ctx.globalAlpha = k;
+    glowText(String(i + 1), 960, y, `800 ${Math.round(56 + 20 * (1 - eo(k)))}px ${MONO}`, C.amber, 24);
+    ctx.restore();
+  });
+  // hand on seat backs after smoke
+  const hk = seg(lt, 6.2, 6.6);
+  if (hk > 0) tag(540, 300, '✋ РУКОЙ ПО СПИНКАМ', 'СЧИТАЙТЕ НА ОЩУПЬ: 1…2…3…4…5', C.amber, hk, 'center', 32);
+}, ['ПОСЧИТАЙТЕ', '*РЯДЫ* ДО ВЫХОДА', 'В !ДЫМУ!', 'ВЫ ЕГО НЕ УВИДИТЕ', 'ИСКАТЬ ПРИДЁТСЯ', '*НА ОЩУПЬ*']);
+
+// 5. Oxygen masks
+S(26, 34, (lt) => {
+  background('#050B17', '#0A1730');
+  hud('▲ РАЗГЕРМЕТИЗАЦИЯ · 11 000 м', C.red);
+  // ceiling
+  ctx.fillStyle = '#0F1E38'; rrect(80, 330, 920, 80, 14); ctx.fill(); ctx.strokeStyle = 'rgba(70,203,255,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+  const ppl = [{ x: 380, y: 980, s: 1, att: 3.4, n: '1' }, { x: 720, y: 1020, s: 0.72, att: 5.6, n: '2' }];
+  ppl.forEach(p => frontFigure(p.x, p.y, p.s, p.s < 1 ? '#7A4FB0' : C.jacket));
+  ppl.forEach((p, i) => {
+    const drop = seg(lt, 0.2 + i * 0.1, 0.9 + i * 0.1);
+    const bounce = drop < 1 ? eo(drop) : 1 + 0.06 * Math.sin((lt - 0.9) * 9) * Math.exp(-(lt - 0.9) * 2);
+    const swing = 0.22 * Math.sin(lt * 4 + i) * Math.exp(-lt * 0.4);
+    const len = 320 * bounce;
+    const hangX = p.x + Math.sin(swing) * len, hangY = 410 + Math.cos(swing) * len;
+    const faceX = p.x, faceY = p.y - 22 * p.s;
+    const ak = eio(seg(lt, p.att - 0.6, p.att));
+    const mx = lerp(hangX, faceX, ak), my = lerp(hangY, faceY, ak);
+    ctx.strokeStyle = 'rgba(230,240,255,0.7)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(p.x, 410); ctx.quadraticCurveTo((p.x + mx) / 2 + 20, (410 + my) / 2, mx, my - 28 * p.s); ctx.stroke();
+    mask(mx, my, p.s * 1.1);
+    if (ak >= 1) {
+      const bk = seg(lt, p.att, p.att + 0.3);
+      ctx.save(); ctx.globalAlpha = bk; ctx.fillStyle = C.green; ctx.shadowColor = C.green; ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.arc(p.x + 130 * p.s, p.y - 160 * p.s, 40, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.fillStyle = '#02130B'; ctx.font = `800 46px ${MONO}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(p.n, p.x + 130 * p.s, p.y - 158 * p.s); ctx.restore();
+    }
+  });
+  // consciousness timer
+  const left = lt < 3.4 ? 30 - lt : 30 - 3.4;
+  const safe = lt >= 3.4;
+  const col = safe ? C.green : C.red;
+  tag(540, 200, safe ? `O₂ ✓  00:${String(Math.ceil(left)).padStart(2, '0')}` : `00:${String(Math.ceil(left)).padStart(2, '0')}`, safe ? 'КИСЛОРОД ПОШЁЛ' : 'ДО ПОТЕРИ СОЗНАНИЯ', col, seg(lt, 0.8, 1.2), 'center', 40);
+}, ['НА ВЫСОТЕ 11 КМ', 'У ВАС *15–30 СЕКУНД*', 'В СОЗНАНИИ', 'СНАЧАЛА МАСКУ *СЕБЕ*', 'ПОТОМ *РЕБЁНКУ*']);
+
+// 6. Brace position
+function braceScene(lt, shake = 0) {
+  background('#050B17', '#0A1730');
+  const floorY = 1220;
+  ctx.fillStyle = '#0C1830'; ctx.fillRect(0, floorY, W, 200);
+  ctx.strokeStyle = 'rgba(70,203,255,0.5)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, floorY); ctx.lineTo(W, floorY); ctx.stroke();
+  const hip = [380, 1040];
+  seatSide(400, floorY);
+  // pose timeline
+  let a = 0, arms = 0;
+  if (lt < 2.6) { const j = seg(lt, 1.0, 1.25), back = seg(lt, 1.5, 2.2); a = 0.62 * eo(j) * (1 - eio(back)); }
+  else { const k = eio(seg(lt, 2.8, 3.8)); a = 0.92 * k; arms = k; }
+  const { hdx, hdy } = seatedFigure(hip[0], hip[1], a, arms);
+  seatSide(740, floorY);
+  // impact flash on wrong pose
+  const hit = seg(lt, 1.15, 1.25) * (1 - seg(lt, 1.25, 1.9));
+  if (hit > 0) {
+    const g = ctx.createRadialGradient(hdx + 40, hdy, 0, hdx + 40, hdy, 120); g.addColorStop(0, `rgba(255,52,72,${0.9 * hit})`); g.addColorStop(1, 'rgba(255,52,72,0)');
+    ctx.fillStyle = g; ctx.fillRect(hdx - 100, hdy - 140, 280, 280);
+  }
+  if (lt < 2.6) {
+    const k = seg(lt, 0.2, 0.6) * (1 - seg(lt, 2.4, 2.6));
+    tag(540, 260, '✕ СИДЕТЬ ПРЯМО', 'НА РЫВКЕ ГОЛОВА ЛЕТИТ В КРЕСЛО', C.red, k, 'center', 38);
+    const ak = seg(lt, 0.8, 1.0) * (1 - seg(lt, 1.6, 1.9));
+    if (ak > 0) { ctx.globalAlpha = ak; glowText('РЫВОК →', 560, 600, `800 44px ${MONO}`, C.red, 20); ctx.globalAlpha = 1; }
+  } else {
+    tag(540, 260, '✓ ПОЗА ДЛЯ АВАРИЙНОЙ ПОСАДКИ', 'ГОЛОВА УЖЕ У СПИНКИ — УДАРА НЕТ', C.green, seg(lt, 3.6, 4.0), 'center', 34);
+    tag(80, 470, 'РУКИ НАД ГОЛОВОЙ', null, C.cyan, seg(lt, 4.6, 5.0), 'left', 28);
+    tag(1000, 1290, 'СТОПЫ НА ПОЛУ', null, C.cyan, seg(lt, 5.6, 6.0), 'right', 28);
+    tag(80, 1290, 'РЕМЕНЬ ТУГО, НИЗКО', null, C.cyan, seg(lt, 6.6, 7.0), 'left', 28);
+  }
+}
+S(34, 44, (lt) => { braceScene(lt); hud('ГОТОВНОСТЬ К УДАРУ', C.amber); },
+  ['СИДЕТЬ ПРЯМО —', '!ОШИБКА!', 'ГОЛОВУ *ВНИЗ,*', 'К СПИНКЕ ВПЕРЕДИ', 'ЭТА ПОЗА', 'СПАСАЕТ ОТ !УДАРА!', 'О КРЕСЛО']);
+
+// 7. Impact
+S(44, 52, (lt) => {
+  if (lt < 1.3) {
+    const a = 46 * Math.exp(-lt * 2.2);
+    ctx.save(); ctx.translate(Math.sin(lt * 63) * a, Math.cos(lt * 51) * a); ctx.rotate(Math.sin(lt * 40) * 0.02 * Math.exp(-lt * 2));
+    braceScene(10); ctx.restore();
+    ctx.fillStyle = `rgba(0,0,0,${seg(lt, 0.5, 1.3)})`; ctx.fillRect(0, 0, W, H);
+  } else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); }
+  const fl = 1 - seg(lt, 0, 0.35);
+  if (fl > 0) { ctx.fillStyle = `rgba(255,255,255,${fl})`; ctx.fillRect(0, 0, W, H); }
+  // emergency floor lighting
+  const lk = seg(lt, 3.0, 4.6);
+  if (lk > 0) {
+    const vx = 540, vy = 760;
+    const n = 26;
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = 0; i < n; i++) {
+        const u = i / n; if (u > lk) break;
+        const p = Math.pow(1 - u, 2.2);
+        const x = lerp(vx + side * 40, 540 + side * 360, p), y = lerp(vy, 1900, p), r = lerp(2, 10, p);
+        const fl2 = 0.7 + 0.3 * Math.sin(lt * 6 + i);
+        ctx.fillStyle = `rgba(255,236,190,${fl2})`; ctx.shadowColor = '#FFD27A'; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    if (lk > 0.6) { ctx.globalAlpha = seg(lk, 0.6, 1); tag(540, 650, 'ВЫХОД', null, C.green, 1, 'center', 40); ctx.globalAlpha = 1; }
+    ctx.globalAlpha = lk; ctx.fillStyle = C.dim; ctx.font = `500 24px ${MONO}`; ctx.textAlign = 'center';
+    ctx.fillText('ДОРОЖКА НА ПОЛУ ВЕДЁТ К ВЫХОДУ', 540, 1120); ctx.globalAlpha = 1;
+  }
+}, [{ s: '!УДАР.!', a: 0.35, b: 3.0, big: true }, { s: '*ОТСЧЁТ* ПОШЁЛ', a: 4.8, b: 8 }]);
+
+// 8. Smoke & crouch
+S(52, 64, (lt) => {
+  background('#04080F', '#08111F');
+  hud('ДЫМ В САЛОНЕ', C.red);
+  const top = 520, bot = 1180, floorY = 1140;
+  ctx.save(); rrect(30, top, 1020, bot - top, 180); ctx.fillStyle = '#0B1529'; ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = C.cyan; ctx.shadowColor = C.cyan; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0; ctx.clip();
+  for (let x = 110; x < 980; x += 110) { ctx.fillStyle = '#1D2E4E'; rrect(x, 640, 36, 54, 18); ctx.fill(); }
+  ctx.fillStyle = '#132545'; ctx.fillRect(30, 560, 1020, 50);
+  for (let x = 60; x < 1050; x += 36) { ctx.fillStyle = `rgba(255,226,170,${0.6 + 0.4 * Math.sin(lt * 5 + x)})`; ctx.fillRect(x, floorY + 6, 10, 5); }
+  ctx.fillStyle = '#0E1A32'; ctx.fillRect(30, floorY, 1020, 60);
+  // door
+  ctx.strokeStyle = C.green; ctx.lineWidth = 6; ctx.shadowColor = C.green; ctx.shadowBlur = 24; rrect(930, 760, 90, 380, 30); ctx.stroke(); ctx.shadowBlur = 0;
+  const crouch = eio(seg(lt, 4.8, 5.8));
+  const walkK = seg(lt, 6.2, 11.6);
+  const x = lerp(240, 860, walkK);
+  const walking = lt > 6.2 && lt < 11.6;
+  const head = sideFigure(x, floorY, crouch, walking ? lt * 7 : 0, 1, { walking });
+  const sb = top + lerp(40, 420, eo(seg(lt, 0.3, 5.0)));
+  fog(1, lt, top, sb);
+  ctx.restore();
+  ctx.save(); ctx.globalAlpha = 0; ctx.restore();
+  const inSmoke = seg(lt, 3.6, 3.9) * (1 - seg(lt, 5.2, 5.5));
+  if (inSmoke > 0) tag(head.hx, head.hy - 230, '! ГОЛОВА В ДЫМУ', null, C.red, inSmoke, 'center', 30);
+  tag(540, 1230, 'ВОЗДУХ ЧИЩЕ У ПОЛА', null, C.green, seg(lt, 6.0, 6.4), 'center', 32);
+  tag(540, 300, 'ДЫМ ОПУСКАЕТСЯ СВЕРХУ', null, C.red, seg(lt, 1.0, 1.4), 'center', 30);
+}, ['САМОЛЁТ ПРОЕКТИРУЮТ', 'ТАК, ЧТОБЫ ВСЕ', 'ВЫШЛИ ЗА *90 СЕКУНД*', '!ДЫМ! ИДЁТ СВЕРХУ', 'ДВИГАЙТЕСЬ', '*ПРИГНУВШИСЬ*']);
+
+// 9. Luggage blocks aisle
+S(64, 72, (lt) => {
+  background();
+  hud('ПРОХОД К ВЫХОДУ', C.cyan);
+  ctx.save();
+  rrect(290, 120, 500, 1240, 40); ctx.fillStyle = 'rgba(14,40,84,0.55)'; ctx.fill();
+  ctx.strokeStyle = C.cyan; ctx.lineWidth = 3; ctx.shadowColor = C.cyan; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0;
+  for (let y = 200; y < 1240; y += 90) {
+    [312, 368, 424, 594, 650, 706].forEach(x => { rrect(x, y, 50, 40, 8); ctx.fillStyle = 'rgba(70,130,210,0.30)'; ctx.fill(); });
+  }
+  ctx.setLineDash([10, 8]); ctx.strokeStyle = 'rgba(70,203,255,0.35)'; ctx.lineWidth = 2;
+  ctx.strokeRect(306, 180, 176, 1080); ctx.strokeRect(588, 180, 176, 1080); ctx.setLineDash([]);
+  ctx.fillStyle = C.green; ctx.shadowColor = C.green; ctx.shadowBlur = 20; ctx.fillRect(280, 1290, 24, 60); ctx.fillRect(776, 1290, 24, 60); ctx.shadowBlur = 0;
+  ctx.restore();
+  tag(540, 1360, 'ВЫХОД', null, C.green, 1, 'center', 28);
+  const blockT = 1.0, bi = 4;
+  const ppl = [];
+  const v = 150;
+  const by = 1130 - bi * 95 + v * Math.min(lt, blockT);
+  for (let i = 0; i < 11; i++) {
+    let y = 1130 - i * 95 + v * lt;
+    if (i === bi) y = by;
+    if (i > bi) y = Math.min(y, by - (i - bi) * 64);
+    ppl.push(y);
+  }
+  // bag
+  const bk = eio(seg(lt, 1.2, 2.4));
+  const bagX = lerp(400, 505, bk);
+  ctx.fillStyle = '#7A5530'; ctx.strokeStyle = C.red; ctx.lineWidth = 3; rrect(bagX, by - 40, 70, 90, 10); ctx.fill(); if (bk > 0.5) ctx.stroke();
+  ppl.forEach((y, i) => {
+    if (y > 1320) return;
+    const fade = 1 - seg(y, 1260, 1320);
+    ctx.globalAlpha = fade;
+    const blocker = i === bi;
+    const x = blocker ? 560 : 540;
+    ctx.fillStyle = blocker ? '#7E2230' : C.jacket; ctx.beginPath(); ctx.ellipse(x, y, 40, 22, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(x, y, 18, 0, 7); ctx.fill();
+    if (blocker) { limb(x - 30, y, bagX + 40, by - 20, 12, '#B03A4A'); }
+    if (i > bi && lt > 2.4) { ctx.fillStyle = C.red; ctx.font = `800 26px ${MONO}`; ctx.textAlign = 'center'; ctx.fillText('!', x + 50, y + 8); }
+    ctx.globalAlpha = 1;
+  });
+  // hazard tape banner
+  const tk = eo(seg(lt, 3.4, 3.8));
+  if (tk > 0) {
+    ctx.save(); ctx.translate(540, 760); ctx.rotate(-0.16); ctx.globalAlpha = tk;
+    ctx.fillStyle = C.red; ctx.shadowColor = C.red; ctx.shadowBlur = 30; ctx.fillRect(-900 * tk, -60, 1800 * tk, 120); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#12030A'; ctx.font = `900 64px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('ЧЕМОДАН = ЛОВУШКА', 0, 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let x = -900; x < 900; x += 60) { ctx.beginPath(); ctx.moveTo(x, -60); ctx.lineTo(x + 20, -60); ctx.lineTo(x - 10, -44); ctx.lineTo(x - 30, -44); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+}, ['ЧЕЛОВЕК ТЯНЕТСЯ', 'ЗА !ЧЕМОДАНОМ!', 'ПРОХОД', '!ЗАБЛОКИРОВАН!']);
+
+// 10. Door, water outside
+S(72, 78, (lt) => {
+  ctx.fillStyle = '#05080F'; ctx.fillRect(0, 0, W, H);
+  const z = 1 + 0.12 * eio(seg(lt, 0, 6));
+  ctx.save(); ctx.translate(540, 800); ctx.scale(z, z); ctx.translate(-540, -800);
+  ctx.fillStyle = '#0A1426'; ctx.fillRect(0, 200, W, 1200);
+  const dx = 330, dy = 400, dw = 420, dh = 780;
+  ctx.save(); rrect(dx, dy, dw, dh, 60); ctx.clip();
+  const sky = ctx.createLinearGradient(0, dy, 0, 760); sky.addColorStop(0, '#04070F'); sky.addColorStop(1, '#14284A');
+  ctx.fillStyle = sky; ctx.fillRect(dx, dy, dw, 360);
+  ctx.fillStyle = '#E8EEF8'; ctx.shadowColor = '#E8EEF8'; ctx.shadowBlur = 30; ctx.beginPath(); ctx.arc(640, 520, 26, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#030914'; ctx.fillRect(dx, 760, dw, dh);
+  for (let i = 0; i < 18; i++) {
+    const y = 770 + i * i * 1.6 + i * 10;
+    ctx.strokeStyle = `rgba(120,170,230,${0.12 + 0.02 * i})`; ctx.lineWidth = 1 + i * 0.25;
+    ctx.beginPath(); for (let x = dx; x <= dx + dw; x += 10) { const yy = y + Math.sin(x / (30 + i * 3) + lt * (1.5 + i * 0.1)) * (2 + i * 0.6); x === dx ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy); } ctx.stroke();
+  }
+  for (let i = 0; i < 12; i++) { const y = 790 + i * 22; ctx.fillStyle = `rgba(230,238,248,${0.35 - i * 0.025})`; ctx.fillRect(640 - 30 + Math.sin(lt * 3 + i) * 12, y, 60 - i * 3, 3); }
+  ctx.restore();
+  ctx.lineWidth = 10; ctx.strokeStyle = C.green; ctx.shadowColor = C.green; ctx.shadowBlur = 30; rrect(dx, dy, dw, dh, 60); ctx.stroke(); ctx.shadowBlur = 0;
+  // silhouette from behind
+  ctx.fillStyle = '#000'; ctx.strokeStyle = 'rgba(120,180,255,0.6)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(540, 905, 52, 0, 7); ctx.fill(); ctx.stroke();
+  rrect(452, 960, 176, 240, 60); ctx.fill(); ctx.stroke();
+  ctx.fillRect(470, 1150, 140, 120);
+  ctx.restore();
+  tag(540, 260, 'ЗА БОРТОМ — ВОДА', null, C.red, seg(lt, 2.4, 2.8), 'center', 36);
+  const v = ctx.createRadialGradient(540, 800, 300, 540, 900, 1100); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, `rgba(0,0,0,${0.5 + 0.4 * seg(lt, 4, 6)})`);
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+}, ['ВЫ *У ВЫХОДА*', 'НО ЗА ДВЕРЬЮ —', '!ВОДА!', 'И ВЫ ДЕЛАЕТЕ', '!ОДНУ ОШИБКУ…!']);
+
+// 11. End card
+S(78, 80, (lt) => {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const k = eo(seg(lt, 0, 0.4));
+  ctx.save(); ctx.globalAlpha = k; ctx.translate(540, 900); ctx.scale(0.9 + 0.1 * k, 0.9 + 0.1 * k); ctx.translate(-540, -900);
+  ctx.font = `900 170px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = C.white; ctx.fillText('ЧАСТЬ 2', 540, 860);
+  glowText('ПОСАДКА НА ВОДУ', 540, 990, `900 64px ${SANS}`, C.yellow, 26);
+  ctx.fillStyle = C.dim; ctx.font = `500 30px ${MONO}`; ctx.fillText('подпишись, чтобы не пропустить', 540, 1090);
+  ctx.restore();
+}, []);
+
+function evacTimer(t) {
+  if (t < 49 || t >= 78) return;
+  const v = Math.max(0, Math.ceil(90 - (t - 49)));
+  const k = seg(t, 49, 49.4);
+  const s = `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+  const blink = (t % 1) < 0.5;
+  ctx.save(); ctx.globalAlpha = k;
+  rrect(770, 1000 - 900 + 0, 260, 110, 12); // y=100
+  ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = C.red; ctx.lineWidth = 3; ctx.shadowColor = C.red; ctx.shadowBlur = 20; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.fillStyle = blink ? C.red : '#5A1B24'; ctx.beginPath(); ctx.arc(800, 140, 10, 0, 7); ctx.fill();
+  ctx.fillStyle = C.red; ctx.font = `800 52px ${MONO}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(s, 822, 142);
+  ctx.fillStyle = C.dim; ctx.font = `500 18px ${MONO}`; ctx.fillText('ЭВАКУАЦИЯ', 822, 186);
+  ctx.restore();
+}
+
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const sc = scenes.find(s => t >= s.t0 && t < s.t1) || scenes[scenes.length - 1];
+  const lt = t - sc.t0, dur = sc.t1 - sc.t0;
+  ctx.save(); sc.draw(lt, dur); ctx.restore();
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  // HUD timer pushed below the centered hud tag
+  ctx.save(); ctx.translate(0, 0); evacTimer(t); ctx.restore();
+  // subtitles
+  const subs = sc.subs || [];
+  if (subs.length) {
+    const norm = subs.map((s, i) => typeof s === 'string' ? { s, a: 0.12 + i * dur / subs.length, b: 0.12 + (i + 1) * dur / subs.length } : s);
+    const cur = norm.find(x => lt >= x.a && lt < x.b);
+    if (cur) drawSub(cur.s, lt - cur.a, cur.big);
+  }
+  const fade = 1 - seg(lt, 0, 0.22);
+  if (fade > 0 && sc.t0 > 0) { ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(0, 0, W, H); }
+}
+window.render = render;
+window.ready = Promise.all([
+  document.fonts.load(`900 92px ${SANS}`), document.fonts.load(`800 30px ${MONO}`), document.fonts.load(`500 20px ${MONO}`)
+]).then(() => true);
+</script>
+</body></html>

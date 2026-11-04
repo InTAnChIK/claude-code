@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Inter,sans-serif;color:#17142B;background:#fff}
+.page{position:relative;overflow:hidden;background:linear-gradient(160deg,#F6F4FF 0%,#FFFFFF 55%,#F1F7FF 100%)}
+.cover{width:1320px;height:880px;display:flex;align-items:center;padding:0 90px;gap:40px}
+.cover .txt{flex:1.15}
+.badge{display:inline-flex;gap:10px;align-items:center;background:#17142B;color:#fff;font-weight:700;font-size:22px;padding:12px 22px;border-radius:999px;letter-spacing:.02em}
+.badge i{width:10px;height:10px;border-radius:50%;background:#7CF2B5;display:block}
+.cover h1{font-size:60px;line-height:1.05;font-weight:900;margin:34px 0 22px;letter-spacing:-.02em}
+.cover p.lead{font-size:28px;line-height:1.4;color:#4A4566;max-width:620px}
+.chips{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}
+.chip{background:#fff;border:2px solid #E3DEFF;color:#4B3BE0;font-weight:700;font-size:21px;padding:10px 18px;border-radius:14px}
+.art{flex:.85;display:flex;justify-content:center;align-items:center;position:relative;height:640px}
+.blob{position:absolute;width:560px;height:560px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#DCD5FF,#EEF4FF 70%,transparent 72%)}
+.art svg{position:relative;width:460px;height:460px}
+.foot{position:absolute;left:90px;bottom:42px;font-size:20px;color:#8A85A3;font-weight:600}
+.detail{width:1320px;padding:90px 96px 100px}
+.detail .top{display:flex;justify-content:space-between;align-items:center}
+.detail .mini{width:150px;height:150px;border-radius:32px;background:#EEEAFF;display:flex;align-items:center;justify-content:center}
+.detail .mini svg{width:120px;height:120px}
+.label{font-size:20px;font-weight:800;letter-spacing:.12em;color:#7A72A8;text-transform:uppercase;margin:46px 0 14px}
+.title{font-size:50px;font-weight:900;line-height:1.12;letter-spacing:-.015em}
+.count{display:inline-block;margin-top:14px;font-size:20px;font-weight:700;color:#14915A;background:#E3F8EC;padding:6px 14px;border-radius:10px}
+.desc p{font-size:30px;line-height:1.5;color:#2B2742;margin-bottom:18px}
+.kit{font-size:28px;line-height:1.5;color:#2B2742;background:#fff;border:2px solid #ECE8FF;border-radius:18px;padding:20px 26px}
+.kit b{color:#17142B}
+.kw{display:flex;flex-wrap:wrap;gap:10px}
+.kw span{font-size:24px;font-weight:600;background:#17142B;color:#fff;padding:9px 16px;border-radius:12px}
+</style></head><body>
+<div id="root"></div>
+<script>
+const ICONS = {
+power: `<svg viewBox="0 0 200 200"><defs><linearGradient id="pg" x1="0" x2="1"><stop offset="0" stop-color="#2E2A44"/><stop offset="1" stop-color="#17142B"/></linearGradient></defs>
+<rect x="45" y="18" width="110" height="164" rx="22" fill="url(#pg)"/><rect x="58" y="34" width="84" height="44" rx="10" fill="#0E0C1C"/>
+<text x="100" y="65" text-anchor="middle" font-family="Inter" font-weight="900" font-size="26" fill="#7CF2B5">87%</text>
+<rect x="66" y="96" width="68" height="8" rx="4" fill="#3A3557"/><rect x="66" y="96" width="52" height="8" rx="4" fill="#7CF2B5"/>
+<rect x="62" y="166" width="22" height="8" rx="3" fill="#4B4666"/><rect x="90" y="166" width="20" height="8" rx="4" fill="#7C6CFF"/><rect x="116" y="166" width="22" height="8" rx="3" fill="#4B4666"/>
+<path d="M104 118 l-14 22 h10 l-4 18 l16 -24 h-10z" fill="#FFD84A"/></svg>`,
+cup: `<svg viewBox="0 0 200 200"><defs><linearGradient id="cg" x1="0" x2="1"><stop offset="0" stop-color="#6B5CF6"/><stop offset=".5" stop-color="#8E82FF"/><stop offset="1" stop-color="#5546E6"/></linearGradient></defs>
+<rect x="56" y="22" width="88" height="20" rx="8" fill="#17142B"/><rect x="62" y="16" width="34" height="10" rx="4" fill="#2E2A44"/>
+<path d="M58 42 h84 l-8 140 q-1 8 -9 8 h-50 q-8 0 -9 -8z" fill="url(#cg)"/>
+<rect x="64" y="96" width="72" height="30" rx="6" fill="#FFFFFF" opacity=".18"/>
+<path d="M78 8 q6 -8 0 -14 M100 8 q6 -8 0 -14" stroke="#B9B2D9" stroke-width="4" fill="none" stroke-linecap="round" transform="translate(0,6)"/></svg>`,
+buds: `<svg viewBox="0 0 200 200"><rect x="30" y="92" width="140" height="92" rx="40" fill="#FFFFFF" stroke="#D9D3F5" stroke-width="4"/>
+<line x1="32" y1="122" x2="168" y2="122" stroke="#D9D3F5" stroke-width="3"/><circle cx="100" cy="152" r="5" fill="#7CF2B5"/>
+<g transform="translate(58 18) rotate(-12)"><rect x="0" y="0" width="38" height="50" rx="19" fill="#17142B"/><rect x="12" y="40" width="14" height="44" rx="7" fill="#17142B"/><circle cx="19" cy="18" r="7" fill="#7C6CFF"/></g>
+<g transform="translate(108 12) rotate(12)"><rect x="0" y="0" width="38" height="50" rx="19" fill="#17142B"/><rect x="12" y="40" width="14" height="44" rx="7" fill="#17142B"/><circle cx="19" cy="18" r="7" fill="#7C6CFF"/></g></svg>`
+};
+const DATA = {
+power: {
+  short: 'Повербанк 20000 мАч',
+  lead: 'Продающее описание с ключевыми словами: быстрая зарядка, ручная кладь, совместимость.',
+  chips: ['20000 мАч', '22.5 Вт', 'в ручную кладь'],
+  title: 'Повербанк 20000 мАч с быстрой зарядкой 22.5 Вт и дисплеем',
+  desc: [
+    'Внешний аккумулятор на 20000 мАч заряжает смартфон 4–5 раз. Хватит на неделю поездок, на долгий день в дороге или на случай отключения света.',
+    'Поддерживает быструю зарядку PD и QC 3.0 мощностью до 22.5 Вт: смартфон набирает 50% примерно за 30 минут. Можно заряжать три устройства одновременно, у повербанка два выхода USB-A и один USB-C. Через порт USB-C повербанк и сам заряжается, и заряжает другие устройства, поэтому лишний кабель брать не нужно.',
+    'На цифровом дисплее виден точный остаток заряда в процентах. Корпус из огнестойкого пластика, встроенная защита от перегрева, перезаряда и короткого замыкания.',
+    'Ёмкость 74 Вт·ч, это меньше лимита авиакомпаний в 100 Вт·ч, поэтому повербанк можно брать в ручную кладь.',
+    'Совместим с iPhone, Samsung, Xiaomi, Huawei, планшетами, наушниками и умными часами.'],
+  kit: 'повербанк, кабель USB-C, инструкция.',
+  kw: ['повербанк', 'внешний аккумулятор', 'power bank 20000', 'портативная зарядка', 'пауэрбанк быстрая зарядка', 'повербанк для айфона', 'зарядка в дорогу']
+},
+cup: {
+  short: 'Термостакан для кофе 500 мл',
+  lead: 'Описание, которое закрывает вопросы покупателя: сколько держит тепло, не протекает ли, чем моется.',
+  chips: ['до 6 ч тепла', 'не протекает', 'подарок'],
+  title: 'Термостакан для кофе 500 мл с крышкой, нержавеющая сталь',
+  desc: [
+    'Кофе остаётся горячим до 6 часов, а холодные напитки сохраняют температуру до 12 часов. Внутри термостакана двойные стенки из пищевой нержавеющей стали с вакуумной прослойкой, поэтому снаружи он не нагревается и не покрывается каплями.',
+    'Крышка с поворотным клапаном закрывается герметично, термостакан можно класть в сумку. Объём 500 мл, это примерно большой капучино. Подходит под подстаканник в машине, а в кофейне в него можно налить напиток с собой вместо одноразового стакана.',
+    'Сталь не впитывает запахи и не даёт привкуса, поэтому после кофе можно наливать чай или воду. Матовое покрытие не скользит в руке и не оставляет отпечатков. Стакан моется вручную, крышка разбирается для чистки.',
+    'Хороший подарок коллеге, студенту, водителю или любителю кофе.'],
+  kit: null,
+  kw: ['термостакан', 'термокружка', 'термостакан для кофе', 'кружка с крышкой', 'стакан для кофе с собой', 'термокружка автомобильная', 'термос кружка']
+},
+buds: {
+  short: 'Беспроводные наушники с шумоподавлением',
+  lead: 'Технические характеристики переведены на язык выгод: что покупатель получит каждый день.',
+  chips: ['ANC', '30 ч с кейсом', 'IPX4'],
+  title: 'Наушники беспроводные с шумоподавлением, Bluetooth 5.3',
+  desc: [
+    'Активное шумоподавление заглушает шум метро, офиса и улицы. В режиме прозрачности слышно окружение, и наушники при этом не нужно снимать.',
+    'Без подзарядки наушники работают 7 часов, с кейсом до 30 часов. Это неделя поездок на работу. За 10 минут в кейсе наушники набирают заряд на 2 часа прослушивания.',
+    'Bluetooth 5.3 даёт стабильное соединение без обрывов и минимальную задержку звука в играх и видео. При открытии кейса наушники подключаются к смартфону автоматически.',
+    'В каждом наушнике по два микрофона с подавлением шума, поэтому собеседник слышит вас и на улице. Сенсорное управление: пауза, переключение треков, ответ на звонок и голосовой помощник.',
+    'Защита от влаги IPX4: наушникам не страшны пот на тренировке и лёгкий дождь. В комплекте амбушюры трёх размеров, чтобы наушники плотно сидели в ушах и не выпадали. Совместимы с iPhone и Android.'],
+  kit: 'наушники, зарядный кейс, кабель USB-C, амбушюры S/M/L, инструкция.',
+  kw: ['беспроводные наушники', 'наушники с шумоподавлением', 'наушники bluetooth', 'tws наушники', 'наушники для айфона', 'наушники для спорта', 'вкладыши беспроводные']
+}};
+const q = new URLSearchParams(location.search), id = q.get('p'), mode = q.get('m');
+const d = DATA[id];
+const root = document.getElementById('root');
+if (mode === 'cover') {
+  root.innerHTML = `<div class="page cover"><div class="txt">
+    <span class="badge"><i></i>SEO-описание · Wildberries / Ozon</span>
+    <h1>${d.short}</h1><p class="lead">${d.lead}</p>
+    <div class="chips">${d.chips.map(c => `<span class="chip">${c}</span>`).join('')}</div></div>
+    <div class="art"><div class="blob"></div>${ICONS[id]}</div>
+    <div class="foot">Образец работы · полный текст на следующем изображении</div></div>`;
+} else {
+  const len = d.desc.join(' ').length;
+  root.innerHTML = `<div class="page detail">
+    <div class="top"><span class="badge"><i></i>SEO-описание · Wildberries / Ozon</span><div class="mini">${ICONS[id]}</div></div>
+    <div class="label">Название карточки</div><div class="title">${d.title}</div>
+    <span class="count">${d.title.length} символов · укладывается в лимит 60</span>
+    <div class="label">Описание · ${len} знаков</div><div class="desc">${d.desc.map(p => `<p>${p}</p>`).join('')}</div>
+    ${d.kit ? `<div class="kit"><b>В комплекте:</b> ${d.kit}</div>` : ''}
+    <div class="label">Ключевые слова для поиска</div><div class="kw">${d.kw.map(k => `<span>${k}</span>`).join('')}</div>
+  </div>`;
+}
+</script></body></html>

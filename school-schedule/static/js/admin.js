@@ -550,8 +550,8 @@ function renderSettings() {
     const n = rows.children.length + 1;
     rows.append(h('div', { class: 'bell-row' },
       h('b', null, `${n}.`),
-      h('input', { type: 'time', value: start, 'aria-label': `Начало ${n}-го урока`, required: true }),
-      h('input', { type: 'time', value: end, 'aria-label': `Конец ${n}-го урока`, required: true })));
+      h('input', { type: 'text', inputmode: 'numeric', placeholder: '08:30', maxlength: 5, autocomplete: 'off', value: start, 'aria-label': `Начало ${n}-го урока (ЧЧ:ММ)` }),
+      h('input', { type: 'text', inputmode: 'numeric', placeholder: '08:30', maxlength: 5, autocomplete: 'off', value: end, 'aria-label': `Конец ${n}-го урока (ЧЧ:ММ)` })));
   };
   meta.bells.forEach((b) => addRow(b.start, b.end));
   const bellsErr = h('div', { class: 'error-box', role: 'alert', hidden: true });
@@ -577,11 +577,13 @@ function renderSettings() {
     bellsErr.hidden = true;
     const bells = [...rows.children].map((row, i) => {
       const [start, end] = row.querySelectorAll('input');
-      return { lesson_no: i + 1, start: start.value, end: end.value };
+      return { lesson_no: i + 1, start: start.value.trim().replace('.', ':'), end: end.value.trim().replace('.', ':') };
     });
     try {
       const empty = bells.find((b) => !b.start || !b.end);
       if (empty) throw new Error(`Укажите время начала и конца ${empty.lesson_no}-го урока`);
+      const bad = bells.find((b) => ![b.start, b.end].every((t) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t)));
+      if (bad) throw new Error(`${bad.lesson_no}-й урок: время пишется как ЧЧ:ММ в 24-часовом формате, например 13:40`);
       if (!bells.length) throw new Error('Добавьте хотя бы один урок');
       await Api.put('/api/admin/bells', { bells });
       await reloadMeta();

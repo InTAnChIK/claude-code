@@ -218,7 +218,7 @@ textarea { min-height: 80px; resize: vertical; }
 .login-card { max-width: 400px; margin: 24px auto; }
 .login-card h1 { font-size: 1.3rem; margin: 0 0 4px; }
 .bell-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
-.bell-row input { padding-left: 8px; padding-right: 4px; }
+.bell-row input { text-align: center; font-variant-numeric: tabular-nums; }
 .row-btn { width: 100%; text-align: left; cursor: pointer; flex-wrap: nowrap; }
 .row-btn .grow { display: flex; flex-direction: column; }
 .cell-empty { color: var(--muted); font-style: italic; }

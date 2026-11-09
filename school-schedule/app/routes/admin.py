@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from .. import audit, security
 from ..db import get_db, now_iso, set_setting, touch_updated
 from ..schedule import WEEKDAYS
-from ..schemas import BellsIn, NameIn, ScheduleCellIn, SettingsIn, UserCreateIn, UserUpdateIn
+from ..schemas import BellsIn, NameIn, ScheduleSlotIn, SettingsIn, UserCreateIn, UserUpdateIn
 
 router = APIRouter(prefix="/api/admin")
 
@@ -99,7 +99,7 @@ def get_schedule(
     conn: sqlite3.Connection = Depends(get_db),
 ):
     rows = conn.execute(
-        "SELECT weekday, lesson_no, subject_id, teacher_id, room_id FROM schedule WHERE class_id = ?",
+        "SELECT weekday, lesson_no, group_no, subject_id, teacher_id, room_id FROM schedule WHERE class_id = ?",
         (class_id,),
     ).fetchall()
     return {"cells": [dict(r) for r in rows]}
@@ -110,37 +110,49 @@ def _cell_label(conn: sqlite3.Connection, class_id: int, weekday: int, lesson_no
     return f"{cls['name'] if cls else '?'}, {WEEKDAYS[weekday].lower()}, {lesson_no}-й урок"
 
 
+GROUP_LABELS = {0: "", 1: "1 группа: ", 2: "2 группа: "}
+
+
 @router.put("/schedule")
-def set_cell(
-    data: ScheduleCellIn,
+def set_slot(
+    data: ScheduleSlotIn,
     user: dict = Depends(security.admin_user),
     conn: sqlite3.Connection = Depends(get_db),
 ):
-    for table, item_id, label in (
-        ("classes", data.class_id, "Класс"),
-        ("subjects", data.subject_id, "Предмет"),
-        ("teachers", data.teacher_id, "Учитель"),
-        ("rooms", data.room_id, "Кабинет"),
-    ):
+    """Заменяет урок целиком: общий для класса или по группам."""
+    parts = data.parts()
+    refs = [("classes", data.class_id, "Класс")]
+    for part in parts.values():
+        refs += [("subjects", part.subject_id, "Предмет"), ("teachers", part.teacher_id, "Учитель"),
+                 ("rooms", part.room_id, "Кабинет")]
+    for table, item_id, label in refs:
         if item_id is not None and not conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (item_id,)).fetchone():
             raise HTTPException(400, f"{label} не найден. Обновите страницу.")
     lesson_count = conn.execute("SELECT COUNT(*) c FROM bells").fetchone()["c"]
     if data.lesson_no > lesson_count:
         raise HTTPException(400, f"В расписании звонков только {lesson_count} уроков — сначала добавьте звонок")
+
     conn.execute(
-        "INSERT INTO schedule (class_id, weekday, lesson_no, subject_id, teacher_id, room_id) "
-        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(class_id, weekday, lesson_no) DO UPDATE SET "
-        "subject_id = excluded.subject_id, teacher_id = excluded.teacher_id, room_id = excluded.room_id",
-        (data.class_id, data.weekday, data.lesson_no, data.subject_id, data.teacher_id, data.room_id),
+        "DELETE FROM schedule WHERE class_id = ? AND weekday = ? AND lesson_no = ?",
+        (data.class_id, data.weekday, data.lesson_no),
     )
-    names = conn.execute(
-        "SELECT (SELECT name FROM subjects WHERE id = ?) s, (SELECT name FROM teachers WHERE id = ?) t, "
-        "(SELECT name FROM rooms WHERE id = ?) r",
-        (data.subject_id, data.teacher_id, data.room_id),
-    ).fetchone()
-    summary = ", ".join(x for x in (names["s"], names["t"], names["r"] and f"каб. {names['r']}") if x)
+    summary = []
+    for group_no, part in parts.items():
+        conn.execute(
+            "INSERT INTO schedule (class_id, weekday, lesson_no, group_no, subject_id, teacher_id, room_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (data.class_id, data.weekday, data.lesson_no, group_no, part.subject_id, part.teacher_id, part.room_id),
+        )
+        names = conn.execute(
+            "SELECT (SELECT name FROM subjects WHERE id = ?) s, (SELECT name FROM teachers WHERE id = ?) t, "
+            "(SELECT name FROM rooms WHERE id = ?) r",
+            (part.subject_id, part.teacher_id, part.room_id),
+        ).fetchone()
+        text = ", ".join(x for x in (names["s"], names["t"], names["r"] and f"каб. {names['r']}") if x)
+        summary.append(GROUP_LABELS[group_no] + text)
     audit.log(conn, user, "update", "schedule", data.class_id,
-              f"Постоянное расписание, {_cell_label(conn, data.class_id, data.weekday, data.lesson_no)}: {summary}")
+              f"Постоянное расписание, {_cell_label(conn, data.class_id, data.weekday, data.lesson_no)}: "
+              + "; ".join(summary))
     touch_updated(conn)
     return {"ok": True}
 

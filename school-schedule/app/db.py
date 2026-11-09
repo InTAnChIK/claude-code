@@ -41,10 +41,11 @@ CREATE TABLE IF NOT EXISTS schedule (
     class_id   INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     weekday    INTEGER NOT NULL CHECK (weekday BETWEEN 1 AND 7),
     lesson_no  INTEGER NOT NULL CHECK (lesson_no BETWEEN 1 AND 12),
+    group_no   INTEGER NOT NULL DEFAULT 0 CHECK (group_no BETWEEN 0 AND 2),
     subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
     teacher_id INTEGER REFERENCES teachers(id) ON DELETE RESTRICT,
     room_id    INTEGER REFERENCES rooms(id) ON DELETE RESTRICT,
-    UNIQUE (class_id, weekday, lesson_no)
+    UNIQUE (class_id, weekday, lesson_no, group_no)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS changes (
     date           TEXT NOT NULL,
     class_id       INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     lesson_no      INTEGER NOT NULL CHECK (lesson_no BETWEEN 1 AND 12),
+    group_no       INTEGER NOT NULL DEFAULT 0 CHECK (group_no BETWEEN 0 AND 2),
     type           TEXT NOT NULL CHECK (type IN ('teacher', 'subject', 'room', 'cancel', 'move')),
     new_subject_id INTEGER REFERENCES subjects(id) ON DELETE RESTRICT,
     new_teacher_id INTEGER REFERENCES teachers(id) ON DELETE RESTRICT,
@@ -73,7 +75,7 @@ CREATE TABLE IF NOT EXISTS changes (
     created_at     TEXT NOT NULL,
     updated_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
     updated_at     TEXT NOT NULL,
-    UNIQUE (date, class_id, lesson_no)
+    UNIQUE (date, class_id, lesson_no, group_no)
 );
 CREATE INDEX IF NOT EXISTS idx_changes_date ON changes(date);
 CREATE INDEX IF NOT EXISTS idx_changes_move ON changes(move_to_date);
@@ -140,9 +142,31 @@ def get_db():
         yield conn
 
 
+def _add_groups_to_old_tables(conn: sqlite3.Connection) -> None:
+    """Базы, созданные до появления групп: пересоздаём две таблицы с колонкой group_no и новым UNIQUE."""
+    def columns(name: str) -> list[str]:
+        return [r["name"] for r in conn.execute(f"PRAGMA table_info({name})")]
+
+    for table in ("schedule", "changes"):
+        # Если прошлый запуск оборвался посреди переноса, {table}_old уже есть — просто доводим дело до конца.
+        if not columns(f"{table}_old"):
+            current = columns(table)
+            if not current or "group_no" in current:
+                continue
+            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+            conn.execute("DROP INDEX IF EXISTS idx_changes_date")
+            conn.execute("DROP INDEX IF EXISTS idx_changes_move")
+        conn.executescript(SCHEMA)
+        names = ", ".join(columns(f"{table}_old"))
+        conn.execute(f"INSERT OR IGNORE INTO {table} ({names}) SELECT {names} FROM {table}_old")
+        conn.execute(f"DROP TABLE {table}_old")
+        conn.commit()
+
+
 def init_db() -> None:
     with connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
+        _add_groups_to_old_tables(conn)
         conn.executescript(SCHEMA)
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(

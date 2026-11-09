@@ -39,6 +39,7 @@ def meta(conn: sqlite3.Connection = Depends(get_db)):
         "teachers": _names(conn, "teachers"),
         "subjects": _names(conn, "subjects"),
         "rooms": _names(conn, "rooms"),
+        "split_classes": [r["class_id"] for r in conn.execute("SELECT DISTINCT class_id FROM schedule WHERE group_no > 0")],
         "today": today().isoformat(),
         "last_updated": get_setting(conn, "last_updated"),
         "change_types": CHANGE_TYPES,

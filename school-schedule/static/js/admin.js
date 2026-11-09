@@ -256,16 +256,18 @@ function describeChange(c) {
   return parts.join(' · ');
 }
 
+const groupLabel = (n) => (n ? `${n} группа` : '');
+
 async function lessonInfo(values, editingId) {
   if (!values.date || !values.class_id || !values.lesson_no) return null;
   const data = await Api.get('/api/schedule', { class_id: values.class_id, start: values.date, days: 1 });
-  const entries = data.days[0].lessons.filter((e) => e.lesson_no === values.lesson_no);
-  const own = entries.find((e) => e.status !== 'move_in');
-  const base = own ? (own.orig || own) : null;
-  let text = base && base.subject
-    ? `По расписанию: ${[base.subject, shortName(base.teacher), base.room && `каб. ${base.room}`].filter(Boolean).join(' · ')}`
+  const own = data.days[0].lessons.filter((e) => e.lesson_no === values.lesson_no && e.status !== 'move_in');
+  const lines = own.map((e) => ({ base: e.orig || e, group: e.group_no })).filter((x) => x.base.subject)
+    .map((x) => [groupLabel(x.group), x.base.subject, shortName(x.base.teacher), x.base.room && `каб. ${x.base.room}`].filter(Boolean).join(' · '));
+  let text = lines.length
+    ? `По расписанию: ${lines.join('; ')}`
     : 'По расписанию урока нет — можно добавить урок через тип «Другой предмет».';
-  if (own && own.change_id && own.change_id !== editingId) {
+  if (own.some((e) => e.change_id && e.change_id !== editingId && e.group_no === (values.group_no || 0))) {
     text += '. Внимание: на этот урок уже есть изменение — отредактируйте его в списке.';
   }
   return text;
@@ -276,12 +278,15 @@ async function changeDialog(change) {
   const editing = !!change;
   const c = change || { date: S.meta.today, type: 'teacher' };
   const is = (...types) => (v) => types.includes(v.type);
+  const hasGroups = (v) => meta.split_classes.includes(v.class_id);
   return formDialog({
     title: editing ? 'Изменить замену' : 'Новая замена',
     fields: [
       { name: 'date', label: 'Дата', type: 'date', required: true, value: c.date, attrs: { min: meta.today } },
       { name: 'class_id', label: 'Класс', type: 'select', number: true, required: true, value: c.class_id, options: opts(meta.classes) },
       { name: 'lesson_no', label: 'Урок', type: 'select', number: true, required: true, value: c.lesson_no, options: bellOptions() },
+      { name: 'group_no', label: 'Для кого', type: 'select', number: true, value: c.group_no || '', placeholder: 'Весь класс',
+        options: [1, 2].map((n) => ({ value: n, label: groupLabel(n) })), show: hasGroups },
       { name: 'info', type: 'info', text: (v) => lessonInfo(v, c.id) },
       { name: 'type', label: 'Что случилось', type: 'select', required: true, value: c.type, placeholder: '— выберите —',
         options: Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label })) },
@@ -303,6 +308,7 @@ async function changeDialog(change) {
         date: v.date,
         class_id: v.class_id,
         lesson_no: v.lesson_no,
+        group_no: hasGroups(v) ? (v.group_no || 0) : 0,
         type: v.type,
         new_subject_id: is('subject')(v) ? v.new_subject_id : null,
         new_teacher_id: is('teacher', 'subject')(v) ? v.new_teacher_id : null,
@@ -333,7 +339,7 @@ async function renderChanges() {
     list.push(h('h2', { class: 'day-title' }, date === S.meta.today ? 'Сегодня' : formatDayTitle(date)));
     list.push(h('ul', { class: 'list' }, items.map((c) => h('li', { class: `item change-item st-${c.type}` },
       h('div', { class: 'grow' },
-        h('div', { class: 'title' }, `${c.class_name}, ${c.lesson_no}-й урок`),
+        h('div', { class: 'title' }, [c.class_name, `${c.lesson_no}-й урок`, groupLabel(c.group_no)].filter(Boolean).join(', ')),
         h('div', { class: `sub change-note st-${c.type}` }, c.type_label, describeChange(c) ? ` → ${describeChange(c)}` : ''),
         c.comment ? h('div', { class: 'sub' }, c.comment) : null),
       c.can_edit ? h('div', { class: 'row' },
@@ -403,19 +409,36 @@ async function renderSchedule() {
   if (!meta.school_days.includes(S.scheduleDay)) S.scheduleDay = meta.school_days[0];
 
   const data = await Api.get('/api/admin/schedule', { class_id: S.scheduleClass });
-  const cells = new Map(data.cells.map((c) => [`${c.weekday}-${c.lesson_no}`, c]));
+  const slots = new Map();
+  for (const c of data.cells) {
+    const key = `${c.weekday}-${c.lesson_no}`;
+    if (!slots.has(key)) slots.set(key, {});
+    slots.get(key)[c.group_no] = c;
+  }
+  const describe = (c) => [nameOf(meta.subjects, c.subject_id), shortName(nameOf(meta.teachers, c.teacher_id)),
+    c.room_id && `каб. ${nameOf(meta.rooms, c.room_id)}`].filter(Boolean).join(' · ');
 
-  const editCell = async (lessonNo, cell) => {
+  const editCell = async (lessonNo, slot) => {
     const className = nameOf(meta.classes, S.scheduleClass);
+    const first = slot && (slot[0] || slot[1]);
+    const second = slot && slot[2];
+    const isSplit = (v) => v.split;
+    const part = (v, suffix) => (v[`subject_id${suffix}`]
+      ? { subject_id: v[`subject_id${suffix}`], teacher_id: v[`teacher_id${suffix}`], room_id: v[`room_id${suffix}`] }
+      : null);
     const saved = await formDialog({
       title: `${className}, ${WEEKDAY_NAMES[S.scheduleDay % 7].toLowerCase()}, ${lessonNo}-й урок`,
-      intro: 'Постоянное расписание. Разовые изменения вносите во вкладке «Изменения».',
       fields: [
-        { name: 'subject_id', label: 'Предмет', type: 'select', number: true, required: true, value: cell?.subject_id, options: opts(meta.subjects) },
-        { name: 'teacher_id', label: 'Учитель', type: 'select', number: true, value: cell?.teacher_id, options: opts(meta.teachers) },
-        { name: 'room_id', label: 'Кабинет', type: 'select', number: true, value: cell?.room_id, options: opts(meta.rooms) },
+        { name: 'subject_id', label: 'Предмет', type: 'select', number: true, required: true, value: first?.subject_id, options: opts(meta.subjects) },
+        { name: 'teacher_id', label: 'Учитель', type: 'select', number: true, value: first?.teacher_id, options: opts(meta.teachers) },
+        { name: 'room_id', label: 'Кабинет', type: 'select', number: true, value: first?.room_id, options: opts(meta.rooms) },
+        { name: 'split', label: 'Разделить на 2 группы (выше — 1-я группа)', type: 'checkbox', value: !!(slot && (slot[1] || slot[2])) },
+        { name: 'subject_id2', label: 'Предмет 2-й группы', type: 'select', number: true, value: second?.subject_id, options: opts(meta.subjects),
+          placeholder: '— у 2-й группы нет урока —', show: isSplit },
+        { name: 'teacher_id2', label: 'Учитель 2-й группы', type: 'select', number: true, value: second?.teacher_id, options: opts(meta.teachers), show: isSplit },
+        { name: 'room_id2', label: 'Кабинет 2-й группы', type: 'select', number: true, value: second?.room_id, options: opts(meta.rooms), show: isSplit },
       ],
-      extraButtons: cell ? [{
+      extraButtons: slot ? [{
         label: 'Убрать урок',
         className: 'danger',
         onClick: async () => {
@@ -426,10 +449,10 @@ async function renderSchedule() {
       }] : [],
       onSubmit: (v) => Api.put('/api/admin/schedule', {
         class_id: S.scheduleClass, weekday: S.scheduleDay, lesson_no: lessonNo,
-        subject_id: v.subject_id, teacher_id: v.teacher_id, room_id: v.room_id,
+        ...(v.split ? { group1: part(v, ''), group2: part(v, '2') } : { whole: part(v, '') }),
       }),
     });
-    if (saved) { toast('Расписание сохранено'); render(); }
+    if (saved) { await reloadMeta(); toast('Расписание сохранено'); render(); }
   };
 
   return h('div', null,
@@ -442,15 +465,18 @@ async function renderSchedule() {
       }, DAY_SHORT[d]))),
     h('h2', { class: 'section-title' }, `${nameOf(meta.classes, S.scheduleClass)} — ${WEEKDAY_NAMES[S.scheduleDay % 7]}`),
     h('ul', { class: 'list' }, meta.bells.map((b) => {
-      const cell = cells.get(`${S.scheduleDay}-${b.lesson_no}`);
-      const details = cell && [shortName(nameOf(meta.teachers, cell.teacher_id)), cell.room_id && `каб. ${nameOf(meta.rooms, cell.room_id)}`].filter(Boolean).join(' · ');
-      return h('li', null, h('button', { type: 'button', class: 'item row-btn', onclick: () => editCell(b.lesson_no, cell) },
+      const slot = slots.get(`${S.scheduleDay}-${b.lesson_no}`);
+      const groups = slot ? [0, 1, 2].filter((g) => slot[g]) : [];
+      const subjects = [...new Set(groups.map((g) => nameOf(meta.subjects, slot[g].subject_id)))].join(' / ');
+      const who = (c) => [shortName(nameOf(meta.teachers, c.teacher_id)), c.room_id && `каб. ${nameOf(meta.rooms, c.room_id)}`].filter(Boolean).join(' · ');
+      const subs = slot && slot[0]
+        ? [[b.start, who(slot[0])].filter(Boolean).join(' · ')]
+        : [b.start, ...groups.map((g) => `${groupLabel(g)}: ${describe(slot[g])}`)];
+      return h('li', null, h('button', { type: 'button', class: 'item row-btn', onclick: () => editCell(b.lesson_no, slot) },
         h('span', { class: 'num-badge' }, h('b', null, b.lesson_no)),
         h('span', { class: 'grow' },
-          cell
-            ? h('span', { class: 'title' }, nameOf(meta.subjects, cell.subject_id))
-            : h('span', { class: 'cell-empty' }, '+ добавить урок'),
-          h('span', { class: 'sub' }, [b.start, details].filter(Boolean).join(' · ')))));
+          groups.length ? h('span', { class: 'title' }, subjects) : h('span', { class: 'cell-empty' }, '+ добавить урок'),
+          subs.map((line) => h('span', { class: 'sub' }, line)))));
     })));
 }
 

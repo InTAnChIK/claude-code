@@ -31,14 +31,15 @@ function lessonCard(e, date) {
     note = e.move.date === date ? `с ${e.move.lesson_no}-го урока` : `с ${formatShort(e.move.date)}, ${e.move.lesson_no}-го урока`;
   }
 
-  const details = [shortName(e.teacher), e.room && `каб. ${e.room}`].filter(Boolean).join(' · ');
+  const details = [e.group_no && `${e.group_no} группа`, !struck && shortName(e.teacher), !struck && e.room && `каб. ${e.room}`]
+    .filter(Boolean).join(' · ');
   return h('li', { class: `lesson st-${e.status}${struck ? ' struck' : ''}` },
     h('div', { class: 'num' }, e.lesson_no),
     h('div', { class: 'head' },
       h('span', { class: 'subject' }, e.subject || '—'),
       h('span', { class: 'time' }, b ? b.start : '')),
     h('div', null,
-      details && !struck ? h('div', { class: 'meta' }, details) : null,
+      details ? h('div', { class: 'meta' }, details) : null,
       STATUS_LABEL[e.status]
         ? h('div', { class: `change-note st-${e.status}` }, STATUS_LABEL[e.status], note ? ` — ${note}` : '')
         : null,

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import audit, config
 from ..db import get_db, now_iso, touch_updated
-from ..schedule import CHANGE_TYPES, WEEKDAYS, base_lesson, bells, merged_day, today
+from ..schedule import CHANGE_TYPES, WEEKDAYS, base_groups, base_lesson, bells, merged_day, today
 from ..schemas import ChangeIn
 from ..security import current_user
 
@@ -32,7 +32,8 @@ def _fmt_date(iso: str) -> str:
 
 
 def describe(row) -> str:
-    parts = [f"{_fmt_date(row['date'])}, {row['class_name']}, {row['lesson_no']}-й урок — {CHANGE_TYPES[row['type']]}"]
+    group = f", {row['group_no']} группа" if row["group_no"] else ""
+    parts = [f"{_fmt_date(row['date'])}, {row['class_name']}, {row['lesson_no']}-й урок{group} — {CHANGE_TYPES[row['type']]}"]
     details = []
     if row["new_subject"]:
         details.append(f"предмет: {row['new_subject']}")
@@ -92,11 +93,16 @@ def _validate(conn: sqlite3.Connection, data: ChangeIn, change_id: Optional[int]
     if lesson_count and data.lesson_no > lesson_count:
         raise HTTPException(400, f"В расписании звонков только {lesson_count} уроков")
 
-    base = base_lesson(conn, data.class_id, data.date, data.lesson_no)
+    groups = base_groups(conn, data.class_id, data.date, data.lesson_no)
+    if groups and data.group_no == 0 and 0 not in groups:
+        raise HTTPException(400, "Этот урок разделён на группы — выберите, для какой группы изменение")
+    if data.group_no and 0 in groups:
+        raise HTTPException(400, "Этот урок не разделён на группы — выберите «Весь класс»")
+    base = base_lesson(conn, data.class_id, data.date, data.lesson_no, data.group_no)
     if data.type != "subject" and not base:
         raise HTTPException(
             400,
-            f"В этот день у класса нет {data.lesson_no}-го урока по расписанию. "
+            f"В этот день у {'группы' if data.group_no else 'класса'} нет {data.lesson_no}-го урока по расписанию. "
             "Чтобы добавить урок, выберите тип «Другой предмет».",
         )
     if data.type == "teacher" and base and base["teacher_id"] == data.new_teacher_id:
@@ -111,6 +117,7 @@ def _validate(conn: sqlite3.Connection, data: ChangeIn, change_id: Optional[int]
         busy = [
             e for e in merged_day(conn, data.move_to_date, data.class_id)
             if e["lesson_no"] == data.move_to_lesson
+            and (e["group_no"] == data.group_no or 0 in (e["group_no"], data.group_no))
             and e["status"] not in ("cancel", "move_out")
             and (change_id is None or e["change_id"] != change_id)
         ]
@@ -142,7 +149,7 @@ def list_changes(
     if class_id:
         sql += " AND ch.class_id = ?"
         params.append(class_id)
-    rows = conn.execute(sql + " ORDER BY ch.date, ch.lesson_no, c.name", params).fetchall()
+    rows = conn.execute(sql + " ORDER BY ch.date, ch.lesson_no, c.name, ch.group_no", params).fetchall()
     return {"items": [_serialize(r, user) for r in rows]}
 
 
@@ -156,11 +163,11 @@ def create_change(
     ts = now_iso()
     try:
         cur = conn.execute(
-            "INSERT INTO changes (date, class_id, lesson_no, type, new_subject_id, new_teacher_id, "
+            "INSERT INTO changes (date, class_id, lesson_no, group_no, type, new_subject_id, new_teacher_id, "
             "new_room_id, move_to_date, move_to_lesson, comment, created_by, created_at, updated_by, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                data.date.isoformat(), data.class_id, data.lesson_no, data.type,
+                data.date.isoformat(), data.class_id, data.lesson_no, data.group_no, data.type,
                 data.new_subject_id, data.new_teacher_id, data.new_room_id,
                 data.move_to_date.isoformat() if data.move_to_date else None,
                 data.move_to_lesson, data.comment, user["id"], ts, user["id"], ts,
@@ -189,11 +196,11 @@ def update_change(
     _validate(conn, data, change_id)
     try:
         conn.execute(
-            "UPDATE changes SET date = ?, class_id = ?, lesson_no = ?, type = ?, new_subject_id = ?, "
+            "UPDATE changes SET date = ?, class_id = ?, lesson_no = ?, group_no = ?, type = ?, new_subject_id = ?, "
             "new_teacher_id = ?, new_room_id = ?, move_to_date = ?, move_to_lesson = ?, comment = ?, "
             "updated_by = ?, updated_at = ? WHERE id = ?",
             (
-                data.date.isoformat(), data.class_id, data.lesson_no, data.type,
+                data.date.isoformat(), data.class_id, data.lesson_no, data.group_no, data.type,
                 data.new_subject_id, data.new_teacher_id, data.new_room_id,
                 data.move_to_date.isoformat() if data.move_to_date else None,
                 data.move_to_lesson, data.comment, user["id"], now_iso(), change_id,

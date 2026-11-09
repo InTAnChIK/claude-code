@@ -34,6 +34,8 @@ TEACHERS = {
     "Fe": ("Фёдорова Светлана Андреевна", "102"),
     "Or": ("Орлов Виктор Семёнович", "Мастерская"),
 }
+# Английский в 7Б идёт по группам: вторую группу ведёт отдельный учитель.
+SECOND_ENGLISH = ("Белова Анна Дмитриевна", "207")
 
 SUBJECTS = {
     "R": "Русский язык", "L": "Литература", "M": "Математика", "A": "Алгебра",
@@ -80,9 +82,11 @@ def seed(conn: sqlite3.Connection) -> None:
     conn.executemany("INSERT INTO bells (lesson_no, start_time, end_time) VALUES (?, ?, ?)", BELLS)
 
     conn.executemany("INSERT INTO classes (name) VALUES (?)", [(c,) for c in CLASSES])
-    conn.executemany("INSERT INTO teachers (name) VALUES (?)", [(t[0],) for t in TEACHERS.values()])
+    conn.executemany(
+        "INSERT INTO teachers (name) VALUES (?)", [(t[0],) for t in TEACHERS.values()] + [(SECOND_ENGLISH[0],)]
+    )
     conn.executemany("INSERT INTO subjects (name) VALUES (?)", [(s,) for s in SUBJECTS.values()])
-    rooms = sorted({t[1] for t in TEACHERS.values()} | set(EXTRA_ROOMS))
+    rooms = sorted({t[1] for t in TEACHERS.values()} | set(EXTRA_ROOMS) | {SECOND_ENGLISH[1]})
     conn.executemany("INSERT INTO rooms (name) VALUES (?)", [(r,) for r in rooms])
 
     class_ids, teacher_ids = _ids(conn, "classes"), _ids(conn, "teachers")
@@ -97,10 +101,16 @@ def seed(conn: sqlite3.Connection) -> None:
                     continue
                 subj, teacher = cell.split()
                 full_name, room = TEACHERS[teacher]
-                rows.append((class_ids[class_name], weekday, lesson_no, subject_ids[SUBJECTS[subj]],
-                             teacher_ids[full_name], room_ids[room]))
+                slot = (class_ids[class_name], weekday, lesson_no)
+                lesson = (subject_ids[SUBJECTS[subj]], teacher_ids[full_name], room_ids[room])
+                if class_name == "7Б" and subj == "E":
+                    second = (lesson[0], teacher_ids[SECOND_ENGLISH[0]], room_ids[SECOND_ENGLISH[1]])
+                    rows += [(*slot, 1, *lesson), (*slot, 2, *second)]
+                else:
+                    rows.append((*slot, 0, *lesson))
     conn.executemany(
-        "INSERT INTO schedule (class_id, weekday, lesson_no, subject_id, teacher_id, room_id) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO schedule (class_id, weekday, lesson_no, group_no, subject_id, teacher_id, room_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
 
@@ -114,7 +124,7 @@ def seed(conn: sqlite3.Connection) -> None:
         (day0, "5А", 2, "teacher", None, T("No"), None, None, None, "Кузнецова А. С. на курсах повышения квалификации"),
         (day0, "7Б", 3, "room", None, None, room_ids["Актовый зал"], None, None, "В кабинете ремонт"),
         (day1, "9В", 1, "cancel", None, None, None, None, None, "Приходить ко 2-му уроку"),
-        (day1, "7Б", 4, "subject", subject_ids["Информатика"], T("Vo"), room_ids["305"], None, None, ""),
+        (day1, "7Б", 3, "subject", subject_ids["Информатика"], T("Vo"), room_ids["305"], None, None, ""),
         (day1, "5А", 1, "move", None, None, None, day1, last_5a + 1, "Урок перенесён в конец дня"),
     ]
     ts = now_iso()

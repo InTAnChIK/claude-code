@@ -32,7 +32,7 @@ def bells(conn: sqlite3.Connection) -> dict[int, dict]:
 
 
 _BASE_SQL = """
-SELECT s.class_id, c.name AS class_name, s.lesson_no,
+SELECT s.class_id, c.name AS class_name, s.lesson_no, s.group_no,
        s.subject_id, sub.name AS subject,
        s.teacher_id, t.name AS teacher,
        s.room_id, r.name AS room
@@ -66,12 +66,21 @@ def _lesson_fields(row) -> dict:
     }
 
 
-def base_lesson(conn: sqlite3.Connection, class_id: int, day: date, lesson_no: int):
+def base_lesson(conn: sqlite3.Connection, class_id: int, day: date, lesson_no: int, group_no: int = 0):
+    """group_no: 0 — весь класс, 1 и 2 — группы."""
     row = conn.execute(
-        _BASE_SQL + " AND s.class_id = ? AND s.lesson_no = ?",
-        (day.isoweekday(), class_id, lesson_no),
+        _BASE_SQL + " AND s.class_id = ? AND s.lesson_no = ? AND s.group_no = ?",
+        (day.isoweekday(), class_id, lesson_no, group_no),
     ).fetchone()
     return _lesson_fields(row) if row else None
+
+
+def base_groups(conn: sqlite3.Connection, class_id: int, day: date, lesson_no: int) -> set[int]:
+    rows = conn.execute(
+        "SELECT group_no FROM schedule WHERE class_id = ? AND weekday = ? AND lesson_no = ?",
+        (class_id, day.isoweekday(), lesson_no),
+    )
+    return {r["group_no"] for r in rows}
 
 
 def _apply_overrides(fields: dict, ch) -> dict:
@@ -92,13 +101,14 @@ def merged_day(conn: sqlite3.Connection, day: date, class_id: int | None = None)
     apply_changes = day >= today()
     class_filter = " AND s.class_id = ?" if class_id else ""
     params = (day.isoweekday(), class_id) if class_id else (day.isoweekday(),)
-    entries: dict[tuple[int, int], dict] = {}
+    entries: dict[tuple[int, int, int], dict] = {}
 
     for row in conn.execute(_BASE_SQL + class_filter, params):
-        entries[(row["class_id"], row["lesson_no"])] = {
+        entries[(row["class_id"], row["lesson_no"], row["group_no"])] = {
             "class_id": row["class_id"],
             "class_name": row["class_name"],
             "lesson_no": row["lesson_no"],
+            "group_no": row["group_no"],
             **_lesson_fields(row),
             "orig": None,
             "status": "normal",
@@ -117,11 +127,12 @@ def merged_day(conn: sqlite3.Connection, day: date, class_id: int | None = None)
     )
 
     for ch in own_changes:
-        key = (ch["class_id"], ch["lesson_no"])
+        key = (ch["class_id"], ch["lesson_no"], ch["group_no"])
         entry = entries.get(key) or {
             "class_id": ch["class_id"],
             "class_name": ch["class_name"],
             "lesson_no": ch["lesson_no"],
+            "group_no": ch["group_no"],
             **_EMPTY,
             "orig": None,
             "move": None,
@@ -149,12 +160,13 @@ def merged_day(conn: sqlite3.Connection, day: date, class_id: int | None = None)
     )
     for ch in incoming:
         src_day = date.fromisoformat(ch["date"])
-        src = base_lesson(conn, ch["class_id"], src_day, ch["lesson_no"]) or dict(_EMPTY)
+        src = base_lesson(conn, ch["class_id"], src_day, ch["lesson_no"], ch["group_no"]) or dict(_EMPTY)
         extra.append(
             {
                 "class_id": ch["class_id"],
                 "class_name": ch["class_name"],
                 "lesson_no": ch["move_to_lesson"],
+                "group_no": ch["group_no"],
                 **_apply_overrides(src, ch),
                 "orig": src,
                 "status": "move_in",
@@ -165,7 +177,7 @@ def merged_day(conn: sqlite3.Connection, day: date, class_id: int | None = None)
         )
 
     result = list(entries.values()) + extra
-    result.sort(key=lambda e: (e["lesson_no"], class_sort_key(e["class_name"])))
+    result.sort(key=lambda e: (e["lesson_no"], class_sort_key(e["class_name"]), e["group_no"]))
     return result
 
 

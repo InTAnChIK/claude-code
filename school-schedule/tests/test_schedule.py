@@ -59,3 +59,40 @@ def test_past_changes_are_hidden():
             (yesterday.isoformat(), cid, lesson["lesson_no"] if lesson else 1),
         )
         assert all(e["status"] == "normal" for e in merged_day(conn, yesterday, cid))
+
+
+def test_old_database_gets_group_columns(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app import config
+    from app.db import init_db
+
+    path = tmp_path / "old.db"
+    monkeypatch.setattr(config, "DB_PATH", path)
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE classes (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE schedule (id INTEGER PRIMARY KEY, class_id INTEGER NOT NULL, weekday INTEGER NOT NULL,
+            lesson_no INTEGER NOT NULL, subject_id INTEGER NOT NULL, teacher_id INTEGER, room_id INTEGER,
+            UNIQUE (class_id, weekday, lesson_no));
+        CREATE TABLE changes (id INTEGER PRIMARY KEY, date TEXT NOT NULL, class_id INTEGER NOT NULL,
+            lesson_no INTEGER NOT NULL, type TEXT NOT NULL, new_subject_id INTEGER, new_teacher_id INTEGER,
+            new_room_id INTEGER, move_to_date TEXT, move_to_lesson INTEGER, comment TEXT NOT NULL DEFAULT '',
+            created_by INTEGER, created_at TEXT NOT NULL, updated_by INTEGER, updated_at TEXT NOT NULL,
+            UNIQUE (date, class_id, lesson_no));
+        CREATE INDEX idx_changes_date ON changes(date);
+        INSERT INTO classes VALUES (1, '5А');
+        INSERT INTO subjects VALUES (1, 'Математика');
+        INSERT INTO schedule (class_id, weekday, lesson_no, subject_id) VALUES (1, 1, 1, 1);
+        INSERT INTO changes (date, class_id, lesson_no, type, created_at, updated_at) VALUES ('2030-01-07', 1, 1, 'cancel', '', '');
+    """)
+    old.close()
+
+    init_db()
+    init_db()
+    with connection() as conn:
+        assert conn.execute("SELECT group_no, subject_id FROM schedule").fetchall()[0]["group_no"] == 0
+        assert conn.execute("SELECT group_no, type FROM changes").fetchone()["type"] == "cancel"
+        conn.execute("INSERT INTO schedule (class_id, weekday, lesson_no, group_no, subject_id) VALUES (1, 1, 2, 1, 1)")
+        conn.execute("INSERT INTO schedule (class_id, weekday, lesson_no, group_no, subject_id) VALUES (1, 1, 2, 2, 1)")

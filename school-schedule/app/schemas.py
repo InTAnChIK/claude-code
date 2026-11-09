@@ -15,6 +15,7 @@ FIELD_LABELS = {
     "date": "Дата",
     "class_id": "Класс",
     "lesson_no": "Номер урока",
+    "group_no": "Группа",
     "type": "Тип изменения",
     "new_subject_id": "Новый предмет",
     "new_teacher_id": "Новый учитель",
@@ -62,6 +63,7 @@ class ChangeIn(Strict):
     date: date
     class_id: int = Id
     lesson_no: int = Field(ge=1, le=12)
+    group_no: int = Field(default=0, ge=0, le=2)
     type: ChangeType
     new_subject_id: Optional[int] = Field(default=None, gt=0)
     new_teacher_id: Optional[int] = Field(default=None, gt=0)
@@ -109,13 +111,32 @@ class NameIn(Strict):
         return v
 
 
-class ScheduleCellIn(Strict):
-    class_id: int = Id
-    weekday: int = Field(ge=1, le=7)
-    lesson_no: int = Field(ge=1, le=12)
+class LessonPart(Strict):
     subject_id: int = Id
     teacher_id: Optional[int] = Field(default=None, gt=0)
     room_id: Optional[int] = Field(default=None, gt=0)
+
+
+class ScheduleSlotIn(Strict):
+    """Один урок в постоянном расписании: либо общий для класса (whole), либо по группам."""
+
+    class_id: int = Id
+    weekday: int = Field(ge=1, le=7)
+    lesson_no: int = Field(ge=1, le=12)
+    whole: Optional[LessonPart] = None
+    group1: Optional[LessonPart] = None
+    group2: Optional[LessonPart] = None
+
+    @model_validator(mode="after")
+    def _one_kind(self):
+        if self.whole and (self.group1 or self.group2):
+            raise ValueError("Урок должен быть либо общим для класса, либо разделён на группы")
+        if not (self.whole or self.group1 or self.group2):
+            raise ValueError("Выберите предмет")
+        return self
+
+    def parts(self) -> dict[int, LessonPart]:
+        return {n: p for n, p in ((0, self.whole), (1, self.group1), (2, self.group2)) if p}
 
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")

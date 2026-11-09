@@ -203,8 +203,8 @@ def test_admin_dictionaries_and_schedule(admin, anon):
     assert admin.post("/api/admin/dict/classes", json={"name": "6а"}).status_code == 409
 
     m = meta(admin)
-    cell = {"class_id": class_id, "weekday": 1, "lesson_no": 1,
-            "subject_id": id_of(m["subjects"], "Математика"), "teacher_id": None, "room_id": None}
+    cell = {"class_id": class_id, "weekday": 1, "lesson_no": 1, "whole": {
+            "subject_id": id_of(m["subjects"], "Математика"), "teacher_id": None, "room_id": None}}
     assert admin.put("/api/admin/schedule", json=cell).status_code == 200
     cells = admin.get("/api/admin/schedule", params={"class_id": class_id}).json()["cells"]
     assert len(cells) == 1
@@ -251,3 +251,62 @@ def test_admin_users(admin):
 
     audit = admin.get("/api/staff/audit").json()["items"]
     assert any(e["entity"] == "user" for e in audit)
+
+
+# ---------- группы ----------
+
+def split_slot(admin, class_name="5А", lesson_no=3):
+    m = meta(admin)
+    day = next_school_day(1)
+    english = id_of(m["subjects"], "Английский язык")
+    slot = {
+        "class_id": id_of(m["classes"], class_name), "weekday": day.isoweekday(), "lesson_no": lesson_no,
+        "group1": {"subject_id": english, "teacher_id": id_of(m["teachers"], "Соколова Елена Игоревна"), "room_id": None},
+        "group2": {"subject_id": english, "teacher_id": id_of(m["teachers"], "Белова Анна Дмитриевна"), "room_id": None},
+    }
+    r = admin.put("/api/admin/schedule", json=slot)
+    assert r.status_code == 200, r.text
+    return slot, day
+
+
+def test_seed_has_split_lesson(anon):
+    m = meta(anon)
+    class_id = id_of(m["classes"], "7Б")
+    assert class_id in m["split_classes"]
+    days = anon.get("/api/schedule", params={"class_id": class_id, "days": 8}).json()["days"]
+    groups = {e["group_no"] for d in days for e in d["lessons"] if e["subject"] == "Английский язык"}
+    assert groups == {1, 2}
+
+
+def test_split_slot_and_group_change(admin, teacher, anon):
+    slot, day = split_slot(admin)
+    cells = admin.get("/api/admin/schedule", params={"class_id": slot["class_id"]}).json()["cells"]
+    here = [c for c in cells if c["weekday"] == slot["weekday"] and c["lesson_no"] == 3]
+    assert sorted(c["group_no"] for c in here) == [1, 2]
+
+    base = {"date": day.isoformat(), "class_id": slot["class_id"], "lesson_no": 3, "type": "cancel", "comment": ""}
+    r = teacher.post("/api/staff/changes", json=base)
+    assert r.status_code == 400 and "разделён на группы" in r.json()["detail"]
+    r = teacher.post("/api/staff/changes", json={**base, "group_no": 2})
+    assert r.status_code == 201, r.text
+    assert teacher.post("/api/staff/changes", json={**base, "group_no": 2}).status_code == 409
+    assert teacher.post("/api/staff/changes", json={**base, "group_no": 1, "type": "room",
+                        "new_room_id": id_of(meta(anon)["rooms"], "Актовый зал")}).status_code == 201
+
+    lessons = anon.get("/api/schedule", params={"class_id": slot["class_id"], "start": day.isoformat()}).json()["days"][0]["lessons"]
+    first = {e["group_no"]: e["status"] for e in lessons if e["lesson_no"] == 3}
+    assert first == {1: "room", 2: "cancel"}
+
+    r = teacher.post("/api/staff/changes", json={**base, "lesson_no": 2, "group_no": 1})
+    assert r.status_code == 400 and "не разделён" in r.json()["detail"]
+
+
+def test_whole_slot_replaces_groups(admin):
+    slot, _ = split_slot(admin)
+    whole = {k: slot[k] for k in ("class_id", "weekday", "lesson_no")} | {"whole": slot["group1"]}
+    assert admin.put("/api/admin/schedule", json=whole).status_code == 200
+    cells = admin.get("/api/admin/schedule", params={"class_id": slot["class_id"]}).json()["cells"]
+    here = [c for c in cells if c["weekday"] == slot["weekday"] and c["lesson_no"] == 3]
+    assert [c["group_no"] for c in here] == [0]
+    r = admin.put("/api/admin/schedule", json=whole | {"group2": slot["group2"]})
+    assert r.status_code == 422 and "либо" in r.json()["detail"]

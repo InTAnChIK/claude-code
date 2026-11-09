@@ -1,0 +1,6 @@
+# Замените raspisanie.example.ru на свой домен.
+# Caddy сам получит бесплатный HTTPS-сертификат Let's Encrypt и будет перенаправлять http → https.
+raspisanie.example.ru {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000
+}

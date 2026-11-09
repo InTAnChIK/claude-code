@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1216">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex">
+  <title>Панель учителя — расписание</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="school-name" id="school-name">Панель учителя</span>
+        <span class="updated" id="who"></span>
+      </div>
+      <div class="top-actions" id="top-actions" hidden>
+        <button type="button" class="btn ghost small" id="btn-password">Пароль</button>
+        <button type="button" class="btn ghost small" id="btn-logout">Выйти</button>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы панели" hidden></nav>
+  </header>
+
+  <main class="container" id="main">
+    <p class="muted center pad">Загрузка…</p>
+  </main>
+
+  <footer class="footer container">
+    <a class="muted small" href="/">← На сайт расписания</a>
+  </footer>
+
+  <dialog class="dialog" id="dialog"></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/admin.js"></script>
+</body>
+</html>

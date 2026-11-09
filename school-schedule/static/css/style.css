@@ -217,8 +217,10 @@ textarea { min-height: 80px; resize: vertical; }
 .toolbar select { width: auto; flex: 1; min-width: 140px; }
 .login-card { max-width: 400px; margin: 24px auto; }
 .login-card h1 { font-size: 1.3rem; margin: 0 0 4px; }
-.bell-row { display: grid; grid-template-columns: 40px 1fr 1fr 44px; gap: 8px; align-items: center; }
-.audit-item .sub { white-space: normal; }
+.bell-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+.bell-row input { padding-left: 8px; padding-right: 4px; }
+.row-btn { width: 100%; text-align: left; cursor: pointer; flex-wrap: nowrap; }
+.row-btn .grow { display: flex; flex-direction: column; }
 .cell-empty { color: var(--muted); font-style: italic; }
 
 /* ---------- диалог ---------- */

@@ -22,7 +22,7 @@ function lessonCard(e, date) {
   const orig = e.orig || {};
 
   let note = null;
-  if (e.status === 'teacher' && orig.teacher) note = `вместо ${shortName(orig.teacher)}`;
+  if (e.status === 'teacher' && orig.teacher) note = `вместо: ${shortName(orig.teacher)}`;
   else if (e.status === 'subject') note = orig.subject ? `вместо: ${orig.subject}` : 'дополнительный урок';
   else if (e.status === 'room' && orig.room) note = `вместо каб. ${orig.room}`;
   else if (e.status === 'move_out') {

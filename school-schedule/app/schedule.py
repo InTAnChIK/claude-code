@@ -187,11 +187,3 @@ def merged_range(
         )
     return out
 
-
-def filter_by(lessons: list[dict], field: str, value: int) -> list[dict]:
-    """Уроки, где учитель/кабинет участвует сейчас или был по расписанию."""
-    key = f"{field}_id"
-    return [
-        e for e in lessons
-        if e[key] == value or (e["orig"] is not None and e["orig"][key] == value)
-    ]

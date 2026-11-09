@@ -36,19 +36,12 @@ def test_meta_and_schedule(anon):
     assert any(d["lessons"] for d in days)
 
 
-def test_changes_feed_and_search(anon):
-    m = meta(anon)
-    feed = anon.get("/api/changes").json()["days"]
-    statuses = {i["status"] for d in feed for i in d["items"]}
+def test_schedule_shows_seeded_changes(anon):
+    statuses = set()
+    for c in meta(anon)["classes"]:
+        days = anon.get("/api/schedule", params={"class_id": c["id"], "days": 8}).json()["days"]
+        statuses |= {e["status"] for d in days for e in d["lessons"]}
     assert {"teacher", "room", "cancel", "subject", "move_out", "move_in"} <= statuses
-
-    teacher_id = id_of(m["teachers"], "Новикова Татьяна Юрьевна")
-    found = anon.get("/api/search", params={"teacher_id": teacher_id, "start": next_school_day().isoformat()}).json()
-    assert any(e["status"] == "teacher" for e in found["days"][0]["lessons"])
-
-    room_id = id_of(m["rooms"], "Актовый зал")
-    found = anon.get("/api/search", params={"room_id": room_id, "start": next_school_day().isoformat()}).json()
-    assert found["days"][0]["lessons"][0]["room"] == "Актовый зал"
 
 
 def test_bad_params_give_russian_errors(anon):
@@ -56,7 +49,6 @@ def test_bad_params_give_russian_errors(anon):
     assert r.status_code == 422
     assert "Класс" in r.json()["detail"]
     assert anon.get("/api/schedule", params={"class_id": 999}).json()["detail"] == "Класс не найден"
-    assert anon.get("/api/search").status_code == 400
 
 
 def test_security_headers(anon):
@@ -140,8 +132,8 @@ def test_teacher_creates_edits_deletes_own_change(teacher, anon):
     assert change["can_edit"] and change["created_by_name"] == "Тест teacher"
     assert meta(anon)["last_updated"] >= before
 
-    feed = anon.get("/api/changes").json()["days"]
-    assert any(i["change_id"] == change["id"] for d in feed for i in d["items"])
+    days = anon.get("/api/schedule", params={"class_id": change["class_id"], "days": 8}).json()["days"]
+    assert any(e["change_id"] == change["id"] for d in days for e in d["lessons"])
 
     r = teacher.put(f"/api/staff/changes/{change['id']}", json=change_payload(teacher, type="cancel", comment="Отмена"))
     assert r.status_code == 200, r.text

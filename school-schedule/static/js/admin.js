@@ -226,7 +226,7 @@ async function reloadMeta() {
 async function startPanel() {
   await reloadMeta();
   document.getElementById('top-actions').hidden = false;
-  document.getElementById('who').textContent = `${S.user.full_name} · ${ROLE_LABELS[S.user.role].toLowerCase()}`;
+  document.getElementById('who').textContent = shortName(S.user.full_name);
   clear($tabs).append(...visibleTabs().map((t) => h('button', { type: 'button', role: 'tab', 'data-tab': t.id }, t.label)));
   $tabs.hidden = visibleTabs().length < 2;
   const fromHash = location.hash.slice(1);
@@ -443,16 +443,14 @@ async function renderSchedule() {
     h('h2', { class: 'section-title' }, `${nameOf(meta.classes, S.scheduleClass)} — ${WEEKDAY_NAMES[S.scheduleDay % 7]}`),
     h('ul', { class: 'list' }, meta.bells.map((b) => {
       const cell = cells.get(`${S.scheduleDay}-${b.lesson_no}`);
-      return h('li', { class: 'item' },
-        h('div', { class: 'num-badge' }, h('b', null, b.lesson_no)),
-        h('div', { class: 'grow' },
+      const details = cell && [shortName(nameOf(meta.teachers, cell.teacher_id)), cell.room_id && `каб. ${nameOf(meta.rooms, cell.room_id)}`].filter(Boolean).join(' · ');
+      return h('li', null, h('button', { type: 'button', class: 'item row-btn', onclick: () => editCell(b.lesson_no, cell) },
+        h('span', { class: 'num-badge' }, h('b', null, b.lesson_no)),
+        h('span', { class: 'grow' },
           cell
-            ? h('div', null,
-              h('div', { class: 'title' }, nameOf(meta.subjects, cell.subject_id)),
-              h('div', { class: 'sub' }, [shortName(nameOf(meta.teachers, cell.teacher_id)), cell.room_id && `каб. ${nameOf(meta.rooms, cell.room_id)}`].filter(Boolean).join(' · ') || ' '))
-            : h('div', { class: 'cell-empty' }, 'нет урока'),
-          h('div', { class: 'sub' }, `${b.start}–${b.end}`)),
-        h('button', { type: 'button', class: 'btn small', onclick: () => editCell(b.lesson_no, cell) }, cell ? 'Изменить' : 'Добавить'));
+            ? h('span', { class: 'title' }, nameOf(meta.subjects, cell.subject_id))
+            : h('span', { class: 'cell-empty' }, '+ добавить урок'),
+          h('span', { class: 'sub' }, [b.start, details].filter(Boolean).join(' · ')))));
     })));
 }
 
@@ -553,27 +551,25 @@ function renderSettings() {
     rows.append(h('div', { class: 'bell-row' },
       h('b', null, `${n}.`),
       h('input', { type: 'time', value: start, 'aria-label': `Начало ${n}-го урока`, required: true }),
-      h('input', { type: 'time', value: end, 'aria-label': `Конец ${n}-го урока`, required: true }),
-      h('button', {
-        type: 'button', class: 'btn small danger', 'aria-label': `Убрать ${n}-й урок`,
-        onclick: (ev) => {
-          if (ev.currentTarget.closest('.bell-row') !== rows.lastElementChild) { toast('Убрать можно только последний урок', true); return; }
-          rows.lastElementChild.remove();
-        },
-      }, '×')));
+      h('input', { type: 'time', value: end, 'aria-label': `Конец ${n}-го урока`, required: true })));
   };
   meta.bells.forEach((b) => addRow(b.start, b.end));
   const bellsErr = h('div', { class: 'error-box', role: 'alert', hidden: true });
   const bellsForm = h('form', { class: 'stack', novalidate: true },
     h('h2', { class: 'section-title' }, 'Расписание звонков'),
     rows,
-    h('button', {
-      type: 'button', class: 'btn',
-      onclick: () => {
-        if (rows.children.length >= 12) { toast('Не больше 12 уроков', true); return; }
-        addRow();
-      },
-    }, '+ Добавить урок'),
+    h('div', { class: 'row' },
+      h('button', {
+        type: 'button', class: 'btn small',
+        onclick: () => {
+          if (rows.children.length >= 12) { toast('Не больше 12 уроков', true); return; }
+          addRow();
+        },
+      }, '+ Добавить урок'),
+      h('button', {
+        type: 'button', class: 'btn small danger',
+        onclick: () => { if (rows.children.length > 1) rows.lastElementChild.remove(); },
+      }, 'Убрать последний')),
     bellsErr,
     h('button', { type: 'submit', class: 'btn primary' }, 'Сохранить звонки'));
   bellsForm.addEventListener('submit', async (ev) => {

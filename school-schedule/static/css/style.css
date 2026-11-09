@@ -89,12 +89,6 @@ main.container { flex: 1; padding-top: 12px; padding-bottom: 24px; }
   .tabs button { padding: 8px 12px; font-size: 1rem; }
 }
 .tabs button[aria-selected="true"] { background: var(--surface-2); color: var(--text); font-weight: 600; }
-.dot {
-  position: absolute; top: 6px; right: 4px; width: 8px; height: 8px;
-  border-radius: 50%; background: var(--c-cancel);
-}
-
-/* ---------- кнопки и поля ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 44px; padding: 10px 16px; border-radius: 12px;
@@ -144,9 +138,7 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .day-title { margin: 20px 0 8px; font-size: 1.05rem; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
 .day-title:first-child { margin-top: 4px; }
-.day-title .muted { font-weight: 400; font-size: 0.875rem; }
-.day.past { opacity: 0.55; }
-
+.day-title .muted { font-weight: 400; font-size: 0.9rem; }
 .lessons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .lesson {
   display: grid; grid-template-columns: 40px 1fr; gap: 4px 12px;
@@ -167,9 +159,6 @@ textarea { min-height: 80px; resize: vertical; }
 .lesson .comment { font-size: 0.9rem; color: var(--text); background: var(--surface-2); padding: 6px 10px; border-radius: 8px; margin-top: 2px; }
 .lesson .class-tag { font-weight: 700; color: var(--accent); }
 .lesson.struck .subject { text-decoration: line-through; color: var(--muted); }
-.lesson.now { box-shadow: 0 0 0 2px var(--accent) inset; }
-.now-tag { font-size: 0.75rem; color: var(--accent); font-weight: 600; }
-
 .badge {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 0.75rem; font-weight: 600; white-space: nowrap;
@@ -191,27 +180,20 @@ textarea { min-height: 80px; resize: vertical; }
 .empty { text-align: center; color: var(--muted); padding: 28px 12px; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
 
 /* ---------- выбор класса ---------- */
-.picker h2 { font-size: 1.2rem; margin: 8px 0 4px; }
-.grade { margin-top: 14px; }
-.grade-title { color: var(--muted); font-size: 0.85rem; margin-bottom: 6px; }
+.picker h2 { font-size: 1.2rem; margin: 8px 0 12px; }
 .grade-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
 .grade-list button {
-  min-height: 52px; border-radius: 12px; border: 1px solid var(--border);
-  background: var(--surface); font-size: 1.1rem; font-weight: 700; cursor: pointer;
+  min-height: 56px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); font-size: 1.15rem; font-weight: 700; cursor: pointer;
 }
 .grade-list button[aria-current="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
-/* ---------- неделя ---------- */
-.week-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.week-nav .label { flex: 1; text-align: center; font-weight: 600; }
+.change-note { font-weight: 600; font-size: 0.9rem; }
 
-/* ---------- поиск ---------- */
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 260px; overflow-y: auto; }
-.chip {
-  border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
-  padding: 6px 12px; cursor: pointer;
-}
-.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+/* ---------- сворачиваемые блоки ---------- */
+.fold { padding: 0; }
+.fold summary { padding: 14px; cursor: pointer; font-weight: 600; }
+.fold-body { padding: 0 14px 14px; }
 
 /* ---------- панель ---------- */
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -239,16 +221,6 @@ textarea { min-height: 80px; resize: vertical; }
 .audit-item .sub { white-space: normal; }
 .cell-empty { color: var(--muted); font-style: italic; }
 
-.type-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
-.type-picker label {
-  display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 10px;
-  border: 1px solid var(--border); cursor: pointer; font-size: 0.9rem;
-}
-.type-picker input { accent-color: currentColor; }
-.type-picker label.st-teacher, .type-picker label.st-subject, .type-picker label.st-room,
-.type-picker label.st-cancel, .type-picker label.st-move { border-color: currentColor; }
-.type-picker label span { color: var(--text); }
-
 /* ---------- диалог ---------- */
 .dialog {
   width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
@@ -275,12 +247,6 @@ textarea { min-height: 80px; resize: vertical; }
 
 /* ---------- подвал ---------- */
 .footer { padding: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border); }
-.legend summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; }
-.legend ul { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
-
-@media (min-width: 720px) {
-  .week-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
-}
 @media (prefers-reduced-motion: no-preference) {
-  .btn, .tabs button, .chip { transition: background-color 0.15s, opacity 0.15s; }
+  .btn, .tabs button { transition: background-color 0.15s, opacity 0.15s; }
 }

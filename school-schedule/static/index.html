@@ -16,17 +16,10 @@
         <span class="school-name" id="school-name">Расписание</span>
         <span class="updated" id="updated" aria-live="polite"></span>
       </div>
-      <button class="class-btn" id="class-btn" type="button" aria-haspopup="dialog" hidden>
+      <button class="class-btn" id="class-btn" type="button" hidden>
         <span id="class-label"></span><span class="chev" aria-hidden="true">▾</span>
       </button>
     </div>
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы" hidden>
-      <button type="button" role="tab" data-view="today">Сегодня</button>
-      <button type="button" role="tab" data-view="tomorrow">Завтра</button>
-      <button type="button" role="tab" data-view="week">Неделя</button>
-      <button type="button" role="tab" data-view="changes">Изменения<span class="dot" id="changes-dot" hidden></span></button>
-      <button type="button" role="tab" data-view="search">Поиск</button>
-    </nav>
   </header>
 
   <main class="container" id="main" aria-live="polite">
@@ -34,20 +27,8 @@
   </main>
 
   <footer class="footer container">
-    <details class="legend">
-      <summary>Обозначения</summary>
-      <ul>
-        <li><span class="badge st-teacher">Замена учителя</span></li>
-        <li><span class="badge st-subject">Другой предмет</span></li>
-        <li><span class="badge st-room">Смена кабинета</span></li>
-        <li><span class="badge st-cancel">Отмена урока</span></li>
-        <li><span class="badge st-move">Перенос</span></li>
-      </ul>
-    </details>
     <a class="muted small" href="/admin">Вход для учителей</a>
   </footer>
-
-  <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="/static/js/common.js"></script>
   <script src="/static/js/app.js"></script>

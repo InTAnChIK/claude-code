@@ -93,16 +93,6 @@ function addDays(iso, n) {
   return isoDate(d);
 }
 
-function mondayOf(iso) {
-  const d = parseDate(iso);
-  const shift = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - shift);
-  return isoDate(d);
-}
-
-function isoWeekday(iso) {
-  return ((parseDate(iso).getDay() + 6) % 7) + 1;
-}
 
 function formatDayTitle(iso) {
   const d = parseDate(iso);
@@ -133,11 +123,6 @@ function shortName(full) {
   const parts = full.trim().split(/\s+/);
   if (parts.length < 2) return full;
   return `${parts[0]} ${parts.slice(1).map((p) => `${p[0]}.`).join(' ')}`;
-}
-
-function classGrade(name) {
-  const m = /^\s*(\d+)/.exec(name);
-  return m ? Number(m[1]) : null;
 }
 
 /* ---------- уведомления ---------- */

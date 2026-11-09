@@ -15,11 +15,9 @@ const S = {
   user: null,
   meta: null,
   tab: 'changes',
-  changesClass: '',
   scheduleClass: null,
   scheduleDay: null,
-  auditItems: [],
-  auditMore: false,
+  open: new Set(),
 };
 
 const $main = document.getElementById('main');
@@ -48,10 +46,7 @@ function formDialog({ title, intro, fields = [], submitLabel = 'Сохранит
         const f = c.field;
         if (f.type === 'info') continue;
         if (f.type === 'checkbox') values[name] = c.input.checked;
-        else if (f.type === 'radios') {
-          const checked = c.input.querySelector('input:checked');
-          values[name] = checked ? checked.value : null;
-        } else {
+        else {
           const raw = c.input.value.trim();
           values[name] = raw === '' ? null : (f.number ? Number(raw) : raw);
         }
@@ -93,11 +88,6 @@ function formDialog({ title, intro, fields = [], submitLabel = 'Сохранит
         input = h('textarea', { ...attrs, value: f.value ?? '' });
       } else if (f.type === 'checkbox') {
         input = h('input', { ...attrs, type: 'checkbox', checked: !!f.value });
-      } else if (f.type === 'radios') {
-        input = h('div', { class: 'type-picker', role: 'radiogroup', id: attrs.id },
-          f.options.map((o) => h('label', { class: o.className || '' },
-            h('input', { type: 'radio', name: f.name, value: o.value, checked: o.value === f.value }),
-            h('span', null, o.label))));
       } else if (f.type === 'info') {
         input = h('div', { class: 'info-box' });
       } else {
@@ -112,7 +102,7 @@ function formDialog({ title, intro, fields = [], submitLabel = 'Сохранит
         wrap = h('div', null, input);
       } else {
         star = h('span', { class: 'req', 'aria-hidden': 'true' }, ' *');
-        wrap = h(f.type === 'radios' ? 'div' : 'label', { class: 'field' },
+        wrap = h('label', { class: 'field' },
           h('span', null, f.label, star), input,
           f.hint ? h('small', { class: 'muted' }, f.hint) : null);
       }
@@ -146,7 +136,7 @@ function formDialog({ title, intro, fields = [], submitLabel = 'Сохранит
         if (v == null || v === '') {
           err.textContent = `Заполните поле «${c.field.label}»`;
           err.hidden = false;
-          (c.input.querySelector ? (c.input.querySelector('input') || c.input) : c.input).focus();
+          c.input.focus();
           return;
         }
       }
@@ -167,7 +157,7 @@ function formDialog({ title, intro, fields = [], submitLabel = 'Сохранит
     clear($dialog).append(form);
     update();
     $dialog.showModal();
-    const first = form.querySelector('input:not([type=radio]):not([type=checkbox]), select, textarea');
+    const first = form.querySelector('input:not([type=checkbox]), select, textarea');
     if (first && !first.value) first.focus();
   });
 }
@@ -222,12 +212,9 @@ function showLogin(message) {
 
 /* ---------- панель ---------- */
 const TABS = [
-  { id: 'changes', label: 'Изменения', render: renderChanges },
-  { id: 'audit', label: 'Журнал', render: renderAudit },
+  { id: 'changes', label: 'Замены', render: renderChanges },
   { id: 'schedule', label: 'Расписание', render: renderSchedule, admin: true },
-  { id: 'dicts', label: 'Справочники', render: renderDicts, admin: true },
-  { id: 'settings', label: 'Звонки и школа', render: renderSettings, admin: true },
-  { id: 'users', label: 'Пользователи', render: renderUsers, admin: true },
+  { id: 'settings', label: 'Настройки', render: renderSettingsTab, admin: true },
 ];
 const visibleTabs = () => TABS.filter((t) => !t.admin || isAdmin());
 
@@ -241,7 +228,7 @@ async function startPanel() {
   document.getElementById('top-actions').hidden = false;
   document.getElementById('who').textContent = `${S.user.full_name} · ${ROLE_LABELS[S.user.role].toLowerCase()}`;
   clear($tabs).append(...visibleTabs().map((t) => h('button', { type: 'button', role: 'tab', 'data-tab': t.id }, t.label)));
-  $tabs.hidden = false;
+  $tabs.hidden = visibleTabs().length < 2;
   const fromHash = location.hash.slice(1);
   S.tab = visibleTabs().some((t) => t.id === fromHash) ? fromHash : 'changes';
   render();
@@ -262,8 +249,8 @@ async function render() {
 /* ---------- изменения ---------- */
 function describeChange(c) {
   const parts = [];
-  if (c.new_subject) parts.push(`предмет: ${c.new_subject}`);
-  if (c.new_teacher) parts.push(`учитель: ${shortName(c.new_teacher)}`);
+  if (c.new_subject) parts.push(c.new_subject);
+  if (c.new_teacher) parts.push(shortName(c.new_teacher));
   if (c.new_room) parts.push(`каб. ${c.new_room}`);
   if (c.type === 'move') parts.push(`на ${formatShort(c.move_to_date)}, ${c.move_to_lesson}-й урок`);
   return parts.join(' · ');
@@ -287,31 +274,28 @@ async function lessonInfo(values, editingId) {
 async function changeDialog(change) {
   const { meta } = S;
   const editing = !!change;
-  const c = change || { date: S.meta.today, class_id: S.changesClass ? Number(S.changesClass) : null, type: 'teacher' };
-  const withNewFields = (v) => v.type && v.type !== 'cancel';
+  const c = change || { date: S.meta.today, type: 'teacher' };
+  const is = (...types) => (v) => types.includes(v.type);
   return formDialog({
-    title: editing ? 'Изменить запись' : 'Новое изменение',
+    title: editing ? 'Изменить замену' : 'Новая замена',
     fields: [
       { name: 'date', label: 'Дата', type: 'date', required: true, value: c.date, attrs: { min: meta.today } },
       { name: 'class_id', label: 'Класс', type: 'select', number: true, required: true, value: c.class_id, options: opts(meta.classes) },
       { name: 'lesson_no', label: 'Урок', type: 'select', number: true, required: true, value: c.lesson_no, options: bellOptions() },
       { name: 'info', type: 'info', text: (v) => lessonInfo(v, c.id) },
-      {
-        name: 'type', label: 'Что меняется', type: 'radios', required: true, value: c.type,
-        options: Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label, className: `st-${value}` })),
-      },
-      { name: 'new_teacher_id', label: 'Новый учитель', type: 'select', number: true, value: c.new_teacher_id, options: opts(meta.teachers),
-        show: withNewFields, required: (v) => v.type === 'teacher' },
-      { name: 'new_subject_id', label: 'Новый предмет', type: 'select', number: true, value: c.new_subject_id, options: opts(meta.subjects),
-        show: withNewFields, required: (v) => v.type === 'subject' },
-      { name: 'new_room_id', label: 'Новый кабинет', type: 'select', number: true, value: c.new_room_id, options: opts(meta.rooms),
-        show: withNewFields, required: (v) => v.type === 'room' },
-      { name: 'move_to_date', label: 'Перенести на дату', type: 'date', value: c.move_to_date || c.date, attrs: { min: meta.today },
-        show: (v) => v.type === 'move', required: (v) => v.type === 'move' },
-      { name: 'move_to_lesson', label: 'Перенести на урок', type: 'select', number: true, value: c.move_to_lesson, options: bellOptions(),
-        show: (v) => v.type === 'move', required: (v) => v.type === 'move' },
-      { name: 'comment', label: 'Комментарий', type: 'textarea', value: c.comment, attrs: { maxlength: 500 },
-        hint: 'Необязательно. Например: «учитель на курсах», «приходить ко 2-му уроку».' },
+      { name: 'type', label: 'Что случилось', type: 'select', required: true, value: c.type, placeholder: '— выберите —',
+        options: Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label })) },
+      { name: 'new_subject_id', label: 'Какой предмет будет', type: 'select', number: true, value: c.new_subject_id, options: opts(meta.subjects),
+        show: is('subject'), required: true },
+      { name: 'new_teacher_id', label: 'Кто ведёт', type: 'select', number: true, value: c.new_teacher_id, options: opts(meta.teachers),
+        show: is('teacher', 'subject'), required: is('teacher') },
+      { name: 'new_room_id', label: 'В каком кабинете', type: 'select', number: true, value: c.new_room_id, options: opts(meta.rooms),
+        show: is('room'), required: true },
+      { name: 'move_to_date', label: 'На какой день', type: 'date', value: c.move_to_date || c.date, attrs: { min: meta.today },
+        show: is('move'), required: true },
+      { name: 'move_to_lesson', label: 'На какой урок', type: 'select', number: true, value: c.move_to_lesson, options: bellOptions(),
+        show: is('move'), required: true },
+      { name: 'comment', label: 'Комментарий (необязательно)', type: 'textarea', value: c.comment, attrs: { maxlength: 500 } },
     ],
     onSubmit: async (v) => {
       if (v.date < meta.today) throw new Error('Нельзя вносить изменения на прошедшие даты');
@@ -320,9 +304,9 @@ async function changeDialog(change) {
         class_id: v.class_id,
         lesson_no: v.lesson_no,
         type: v.type,
-        new_subject_id: withNewFields(v) ? v.new_subject_id : null,
-        new_teacher_id: withNewFields(v) ? v.new_teacher_id : null,
-        new_room_id: withNewFields(v) ? v.new_room_id : null,
+        new_subject_id: is('subject')(v) ? v.new_subject_id : null,
+        new_teacher_id: is('teacher', 'subject')(v) ? v.new_teacher_id : null,
+        new_room_id: is('room')(v) ? v.new_room_id : null,
         move_to_date: v.type === 'move' ? v.move_to_date : null,
         move_to_lesson: v.type === 'move' ? v.move_to_lesson : null,
         comment: v.comment || '',
@@ -335,11 +319,8 @@ async function changeDialog(change) {
 }
 
 async function renderChanges() {
-  const data = await Api.get('/api/staff/changes', { class_id: S.changesClass || null });
-  const classSelect = h('select', { 'aria-label': 'Фильтр по классу', value: S.changesClass, onchange: (e) => { S.changesClass = e.target.value; render(); } },
-    h('option', { value: '' }, 'Все классы'),
-    S.meta.classes.map((c) => h('option', { value: String(c.id) }, c.name)));
-  const addBtn = h('button', { type: 'button', class: 'btn primary', onclick: async () => { if (await changeDialog()) render(); } }, '+ Добавить изменение');
+  const data = await Api.get('/api/staff/changes');
+  const addBtn = h('button', { type: 'button', class: 'btn primary block', onclick: async () => { if (await changeDialog()) render(); } }, '+ Добавить замену');
 
   const byDate = new Map();
   for (const item of data.items) {
@@ -349,53 +330,68 @@ async function renderChanges() {
 
   const list = [];
   for (const [date, items] of byDate) {
-    list.push(h('h2', { class: 'day-title' }, formatDayTitle(date), date === S.meta.today ? h('span', { class: 'muted' }, 'сегодня') : null));
+    list.push(h('h2', { class: 'day-title' }, date === S.meta.today ? 'Сегодня' : formatDayTitle(date)));
     list.push(h('ul', { class: 'list' }, items.map((c) => h('li', { class: `item change-item st-${c.type}` },
       h('div', { class: 'grow' },
-        h('div', { class: 'title' }, `${c.class_name} · ${c.lesson_no}-й урок · `, h('span', { class: `badge st-${c.type}` }, c.type_label)),
-        describeChange(c) ? h('div', { class: 'sub' }, describeChange(c)) : null,
-        c.comment ? h('div', { class: 'sub' }, `«${c.comment}»`) : null,
-        h('div', { class: 'sub' }, `${c.updated_by_name || c.created_by_name || 'система'}, ${formatTs(c.updated_at)}`)),
+        h('div', { class: 'title' }, `${c.class_name}, ${c.lesson_no}-й урок`),
+        h('div', { class: `sub change-note st-${c.type}` }, c.type_label, describeChange(c) ? ` → ${describeChange(c)}` : ''),
+        c.comment ? h('div', { class: 'sub' }, c.comment) : null),
       c.can_edit ? h('div', { class: 'row' },
         h('button', { type: 'button', class: 'btn small', onclick: async () => { if (await changeDialog(c)) render(); } }, 'Изменить'),
         h('button', {
           type: 'button', class: 'btn small danger',
           onclick: async () => {
-            if (!confirm(`Удалить изменение: ${c.class_name}, ${formatShort(c.date)}, ${c.lesson_no}-й урок?`)) return;
+            if (!confirm(`Удалить замену: ${c.class_name}, ${formatShort(c.date)}, ${c.lesson_no}-й урок?`)) return;
             try {
               await Api.del(`/api/staff/changes/${c.id}`);
-              toast('Изменение удалено');
+              toast('Удалено');
               render();
             } catch (e) { toast(e.message, true); }
           },
         }, 'Удалить')) : null))));
   }
 
-  return h('div', null,
-    h('div', { class: 'toolbar' }, classSelect, addBtn),
-    list.length ? list : h('div', { class: 'empty' }, 'Изменений на сегодня и ближайшие дни нет. Прошедшие даты скрываются автоматически.'),
-    !isAdmin() ? h('p', { class: 'muted small' }, 'Учитель может редактировать и удалять только свои записи.') : null);
+  return h('div', { class: 'stack' },
+    addBtn,
+    h('div', null, list.length ? list : h('div', { class: 'empty' }, 'Замен на ближайшие дни нет')),
+    isAdmin() ? null : collapsible('audit', 'История изменений', auditList));
+}
+
+/* ---------- сворачиваемый блок ---------- */
+function collapsible(id, title, build) {
+  const body = h('div', { class: 'fold-body' });
+  const details = h('details', { class: 'card fold', open: S.open.has(id) }, h('summary', null, title), body);
+  let loaded = false;
+  const load = async () => {
+    if (loaded) return;
+    loaded = true;
+    clear(body).append(h('p', { class: 'muted small' }, 'Загрузка…'));
+    try { clear(body).append(await build()); } catch (e) { clear(body).append(errorBox(e.message)); loaded = false; }
+  };
+  details.addEventListener('toggle', () => {
+    if (details.open) { S.open.add(id); load(); } else S.open.delete(id);
+  });
+  if (S.open.has(id)) load();
+  return details;
 }
 
 /* ---------- журнал ---------- */
-async function renderAudit(append = false) {
-  const offset = append ? S.auditItems.length : 0;
-  const data = await Api.get('/api/staff/audit', { limit: 50, offset });
-  S.auditItems = append ? S.auditItems.concat(data.items) : data.items;
-  S.auditMore = data.has_more;
-  return h('div', null,
-    h('p', { class: 'muted small' }, isAdmin() ? 'Все действия в панели.' : 'Кто и когда вносил изменения в замены.'),
-    S.auditItems.length ? h('ul', { class: 'list' }, S.auditItems.map((e) => h('li', { class: 'item audit-item' },
+async function auditList() {
+  const ul = h('ul', { class: 'list' });
+  const more = h('button', { type: 'button', class: 'btn', hidden: true }, 'Показать ещё');
+  let offset = 0;
+  const loadMore = async () => {
+    const data = await Api.get('/api/staff/audit', { limit: 30, offset });
+    offset += data.items.length;
+    ul.append(...data.items.map((e) => h('li', { class: 'item' },
       h('div', { class: 'grow' },
-        h('div', { class: 'title' }, e.summary),
-        h('div', { class: 'sub' }, `${formatTs(e.ts)} · ${e.username} · ${ACTION_LABELS[e.action] || e.action}`)))))
-      : h('div', { class: 'empty' }, 'Журнал пока пуст.'),
-    S.auditMore ? h('p', { class: 'center' }, h('button', {
-      type: 'button', class: 'btn',
-      onclick: async () => {
-        try { clear($main).append(await renderAudit(true)); } catch (e) { toast(e.message, true); }
-      },
-    }, 'Показать ещё')) : null);
+        h('div', null, e.summary),
+        h('div', { class: 'sub' }, `${formatTs(e.ts)} · ${e.username} · ${ACTION_LABELS[e.action] || e.action}`)))));
+    more.hidden = !data.has_more;
+  };
+  more.addEventListener('click', () => loadMore().catch((e) => toast(e.message, true)));
+  await loadMore();
+  return offset ? h('div', { class: 'stack' }, ul, more) : h('div', { class: 'empty' }, 'Пока пусто');
 }
 
 /* ---------- постоянное расписание ---------- */
@@ -468,54 +464,60 @@ const DICTS = [
   { kind: 'rooms', title: 'Кабинеты', placeholder: 'Например, 204 или Спортзал' },
 ];
 
-function renderDicts() {
-  return h('div', null, DICTS.map((d) => {
-    const input = h('input', { type: 'text', placeholder: d.placeholder, maxlength: 100, 'aria-label': `Добавить: ${d.title}` });
-    const err = h('div', { class: 'error-box', role: 'alert', hidden: true });
-    const form = h('form', { class: 'row', novalidate: true },
-      h('div', { class: 'spacer' }, input),
-      h('button', { type: 'submit', class: 'btn primary' }, 'Добавить'));
-    form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      err.hidden = true;
-      if (!input.value.trim()) { err.textContent = 'Введите название'; err.hidden = false; return; }
-      try {
-        await Api.post(`/api/admin/dict/${d.kind}`, { name: input.value });
-        await reloadMeta();
-        toast('Добавлено');
-        render();
-      } catch (e) { err.textContent = e.message; err.hidden = false; }
-    });
-    const items = S.meta[d.kind];
-    return h('section', null,
-      h('h2', { class: 'section-title' }, `${d.title} (${items.length})`),
-      form, err,
-      h('ul', { class: 'list' }, items.map((item) => h('li', { class: 'item' },
-        h('div', { class: 'grow title' }, item.name),
-        h('button', {
-          type: 'button', class: 'btn small',
-          onclick: async () => {
-            const ok = await formDialog({
-              title: 'Переименовать',
-              fields: [{ name: 'name', label: 'Название', required: true, value: item.name, attrs: { maxlength: 100 } }],
-              onSubmit: (v) => Api.put(`/api/admin/dict/${d.kind}/${item.id}`, { name: v.name }),
-            });
-            if (ok) { await reloadMeta(); toast('Сохранено'); render(); }
-          },
-        }, 'Переименовать'),
-        h('button', {
-          type: 'button', class: 'btn small danger',
-          onclick: async () => {
-            if (!confirm(`Удалить «${item.name}»?${d.deleteWarning ? `\n${d.deleteWarning}` : ''}`)) return;
-            try {
-              await Api.del(`/api/admin/dict/${d.kind}/${item.id}`);
-              await reloadMeta();
-              toast('Удалено');
-              render();
-            } catch (e) { toast(e.message, true); }
-          },
-        }, 'Удалить')))));
-  }));
+function dictSection(d) {
+  const input = h('input', { type: 'text', placeholder: d.placeholder, maxlength: 100, 'aria-label': `Добавить: ${d.title}` });
+  const err = h('div', { class: 'error-box', role: 'alert', hidden: true });
+  const form = h('form', { class: 'row', novalidate: true },
+    h('div', { class: 'spacer' }, input),
+    h('button', { type: 'submit', class: 'btn primary' }, 'Добавить'));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    err.hidden = true;
+    if (!input.value.trim()) { err.textContent = 'Введите название'; err.hidden = false; return; }
+    try {
+      await Api.post(`/api/admin/dict/${d.kind}`, { name: input.value });
+      await reloadMeta();
+      toast('Добавлено');
+      render();
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+  });
+  const items = S.meta[d.kind];
+  return h('div', { class: 'stack' },
+    form, err,
+    h('ul', { class: 'list' }, items.map((item) => h('li', { class: 'item' },
+      h('div', { class: 'grow title' }, item.name),
+      h('button', {
+        type: 'button', class: 'btn small',
+        onclick: async () => {
+          const ok = await formDialog({
+            title: 'Переименовать',
+            fields: [{ name: 'name', label: 'Название', required: true, value: item.name, attrs: { maxlength: 100 } }],
+            onSubmit: (v) => Api.put(`/api/admin/dict/${d.kind}/${item.id}`, { name: v.name }),
+          });
+          if (ok) { await reloadMeta(); toast('Сохранено'); render(); }
+        },
+      }, 'Переименовать'),
+      h('button', {
+        type: 'button', class: 'btn small danger',
+        onclick: async () => {
+          if (!confirm(`Удалить «${item.name}»?${d.deleteWarning ? `\n${d.deleteWarning}` : ''}`)) return;
+          try {
+            await Api.del(`/api/admin/dict/${d.kind}/${item.id}`);
+            await reloadMeta();
+            toast('Удалено');
+            render();
+          } catch (e) { toast(e.message, true); }
+        },
+      }, 'Удалить')))));
+}
+
+/* ---------- вкладка «Настройки» ---------- */
+function renderSettingsTab() {
+  return h('div', { class: 'stack' },
+    collapsible('school', 'Школа и звонки', async () => renderSettings()),
+    DICTS.map((d) => collapsible(d.kind, `${d.title} (${S.meta[d.kind].length})`, async () => dictSection(d))),
+    collapsible('users', 'Пользователи', renderUsers),
+    collapsible('audit', 'Журнал действий', auditList));
 }
 
 /* ---------- звонки и настройки школы ---------- */
@@ -525,7 +527,7 @@ function renderSettings() {
   const nameInput = h('input', { type: 'text', value: meta.school_name, maxlength: 150 });
   const dayChecks = [1, 2, 3, 4, 5, 6, 7].map((d) => h('input', { type: 'checkbox', value: String(d), checked: meta.school_days.includes(d) }));
   const settingsErr = h('div', { class: 'error-box', role: 'alert', hidden: true });
-  const settingsForm = h('form', { class: 'card stack', novalidate: true },
+  const settingsForm = h('form', { class: 'stack', novalidate: true },
     h('h2', { class: 'section-title' }, 'Школа'),
     h('label', { class: 'field' }, h('span', null, 'Название школы'), nameInput),
     h('div', { class: 'field' }, h('span', null, 'Учебные дни'),
@@ -562,7 +564,7 @@ function renderSettings() {
   };
   meta.bells.forEach((b) => addRow(b.start, b.end));
   const bellsErr = h('div', { class: 'error-box', role: 'alert', hidden: true });
-  const bellsForm = h('form', { class: 'card stack', novalidate: true },
+  const bellsForm = h('form', { class: 'stack', novalidate: true },
     h('h2', { class: 'section-title' }, 'Расписание звонков'),
     rows,
     h('button', {

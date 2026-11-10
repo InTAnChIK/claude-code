@@ -9,7 +9,7 @@ const STATUS_LABEL = {
   move_in: 'Перенесён',
 };
 
-const state = { meta: null, classId: null, picking: false };
+const state = { meta: null, classId: null, picking: false, day: null };
 const $main = document.getElementById('main');
 const $classBtn = document.getElementById('class-btn');
 
@@ -46,9 +46,10 @@ function lessonCard(e, date) {
       e.comment ? h('div', { class: 'comment' }, e.comment) : null));
 }
 
-function dayBlock(title, day) {
+function dayBlock(day) {
+  const note = { [today()]: 'сегодня', [addDays(today(), 1)]: 'завтра' }[day.date];
   return h('section', null,
-    h('h2', { class: 'day-title' }, title, h('span', { class: 'muted' }, formatDayTitle(day.date))),
+    h('h2', { class: 'day-title' }, formatDayTitle(day.date), note ? h('span', { class: 'muted' }, note) : null),
     day.lessons.length
       ? h('ul', { class: 'lessons' }, day.lessons.map((e) => lessonCard(e, day.date)))
       : h('div', { class: 'empty' }, 'Уроков нет'));
@@ -70,15 +71,24 @@ function renderPicker() {
     state.meta.classes.length ? list : h('div', { class: 'empty' }, 'Классы ещё не добавлены.'));
 }
 
+/* Ближайшие 7 дней: кнопка на каждый учебный день и «Неделя» — все дни подряд. */
 async function renderSchedule() {
-  const data = await Api.get('/api/schedule', { class_id: state.classId, start: today(), days: 8 });
-  const [first, ...rest] = data.days;
-  const next = rest.find((d) => d.lessons.length);
-  const nextTitle = next && next.date === addDays(today(), 1) ? 'Завтра' : 'Следующий учебный день';
-  return h('div', null,
-    first.lessons.length ? dayBlock('Сегодня', first) : null,
-    next ? dayBlock(nextTitle, next) : null,
-    !first.lessons.length && !next ? h('div', { class: 'empty' }, 'Уроков на ближайшую неделю нет') : null);
+  const data = await Api.get('/api/schedule', { class_id: state.classId, start: today(), days: 7 });
+  const days = data.days.filter((d) => d.lessons.length);
+  if (!days.length) return h('div', { class: 'empty' }, 'Уроков на ближайшую неделю нет');
+  if (state.day !== 'week' && !days.some((d) => d.date === state.day)) state.day = days[0].date;
+
+  const pick = (value) => () => { state.day = value; render(); };
+  const strip = h('div', { class: 'days', role: 'group', 'aria-label': 'День' },
+    days.map((d) => {
+      const date = parseDate(d.date);
+      return h('button', { type: 'button', 'aria-pressed': String(state.day === d.date), onclick: pick(d.date) },
+        h('small', null, WEEKDAY_SHORT[date.getDay()]), h('b', null, date.getDate()));
+    }),
+    h('button', { type: 'button', class: 'wide', 'aria-pressed': String(state.day === 'week'), onclick: pick('week') }, 'Неделя'));
+
+  const shown = state.day === 'week' ? days : days.filter((d) => d.date === state.day);
+  return h('div', null, strip, shown.map(dayBlock));
 }
 
 async function render() {

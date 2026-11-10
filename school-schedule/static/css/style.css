@@ -190,6 +190,19 @@ textarea { min-height: 80px; resize: vertical; }
 
 .change-note { font-weight: 600; font-size: 0.9rem; }
 
+/* ---------- выбор дня ---------- */
+.days { display: flex; gap: 6px; margin-bottom: 4px; overflow-x: auto; scrollbar-width: none; }
+.days::-webkit-scrollbar { display: none; }
+.days button {
+  flex: 1 0 44px; min-height: 52px; padding: 4px 6px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; color: var(--muted);
+}
+.days button b { color: var(--text); font-size: 1.05rem; }
+.days button.wide { flex-basis: 76px; font-weight: 600; }
+.days button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.days button[aria-pressed="true"] b { color: var(--accent-text); }
+
 /* ---------- сворачиваемые блоки ---------- */
 .fold { padding: 0; }
 .fold summary { padding: 14px; cursor: pointer; font-weight: 600; }
